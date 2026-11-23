@@ -32,6 +32,7 @@ GET /api/health
 | `AUTH_USERNAME` | `aria` | Basic Auth 用户名 |
 | `AUTH_PASSWORD` | 无 | Basic Auth 密码 |
 | `SOURCE_ALLOWED_HOSTS` | 推荐源域名 | 允许导入音源脚本的域名，逗号分隔 |
+| `DEFAULT_SOURCES_ENABLED` | `1` | 启动时自动补齐默认音源 |
 | `MEDIA_PROXY` | Compose 中为 `1` | 通过同源接口流式代理音频，避免 HTTPS 混合内容 |
 | `MEDIA_ALLOWED_HOSTS` | 空 | 可选的媒体 CDN 域名白名单 |
 | `ALLOW_PRIVATE_SOURCE_URLS` | `0` | 为 `1` 时允许内网音源地址，需自行评估风险 |

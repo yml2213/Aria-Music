@@ -5,6 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HttpError } from "./http";
 import { MediaProxy } from "./media-proxy";
+import { seedDefaultSources } from "./default-source-seeder";
+import { DEFAULT_SOURCES } from "./default-sources";
 import { requestPublicText } from "./remote";
 import { getLyric, importNeteasePlaylist, searchTracks } from "./search";
 import {
@@ -35,40 +37,22 @@ try {
 
 const providerIds = new Set<Provider>(["netease", "qq", "kugou", "kuwo"]);
 const qualityIds = new Set<Quality>(["standard", "lossless", "hires", "jymaster"]);
-const recommendations = [
-  {
-    id: "qingliang",
-    name: "轻量音源",
-    description: "QQ、网易、酷狗、酷我多线路并发取链，带超时和冷却。",
-    url: "https://raw.githubusercontent.com/pdone/lx-music-source/main/qingliang/latest.js",
-    mirrorUrl:
-      "https://gh-proxy.org/raw.githubusercontent.com/pdone/lx-music-source/main/qingliang/latest.js",
-  },
-  {
-    id: "juhe",
-    name: "聚合 API",
-    description: "结构简单的聚合取链接口，适合作为备用音源。",
-    url: "https://raw.githubusercontent.com/pdone/lx-music-source/main/juhe/latest.js",
-    mirrorUrl:
-      "https://gh-proxy.org/raw.githubusercontent.com/pdone/lx-music-source/main/juhe/latest.js",
-  },
-  {
-    id: "feichangdao",
-    name: "非常刀",
-    description: "多平台聚合音源，包含多个第三方线路。",
-    url: "https://raw.githubusercontent.com/pdone/lx-music-source/main/feichangdao/latest.js",
-    mirrorUrl:
-      "https://gh-proxy.org/raw.githubusercontent.com/pdone/lx-music-source/main/feichangdao/latest.js",
-  },
-  {
-    id: "changqing",
-    name: "长青音源",
-    description: "常见主备线路之一，脚本经过混淆，启用前请自行确认来源。",
-    url: "https://raw.githubusercontent.com/pdone/lx-music-source/main/changqing/latest.js",
-    mirrorUrl:
-      "https://gh-proxy.org/raw.githubusercontent.com/pdone/lx-music-source/main/changqing/latest.js",
-  },
-];
+function missingDefaultSources() {
+  const existingUrls = new Set(
+    store
+      .config()
+      .sources.flatMap((item) => (item.sourceUrl ? [item.sourceUrl] : [])),
+  );
+  return DEFAULT_SOURCES.filter(
+    (item) => !existingUrls.has(item.url) && !existingUrls.has(item.mirrorUrl),
+  ).map((item) => ({
+    id: item.slug,
+    name: item.name,
+    description: item.description,
+    url: item.url,
+    mirrorUrl: item.mirrorUrl,
+  }));
+}
 
 function json(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, {
@@ -124,7 +108,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     return true;
   }
   if (request.method === "GET" && url.pathname === "/api/sources/catalog") {
-    json(response, 200, { sources: recommendations });
+    json(response, 200, { sources: missingDefaultSources() });
     return true;
   }
   if (request.method === "POST" && url.pathname === "/api/sources/import") {
@@ -328,8 +312,17 @@ server.listen(PORT, HOST, () => {
   console.log(
     `Aria Music server: http://${HOST}:${PORT} (auth: ${auth.enabled ? "on" : "off"})`,
   );
-  const primaryId = store.config().primaryId;
-  if (primaryId) void sources.testSource(primaryId).catch(() => undefined);
+  const defaultSourcesEnabled = process.env.DEFAULT_SOURCES_ENABLED !== "0";
+  if (defaultSourcesEnabled) {
+    void seedDefaultSources({ store, manager: sources }).catch((error) => {
+      console.error("[default-sources] initialization failed", error);
+      const primaryId = store.config().primaryId;
+      if (primaryId) void sources.testSource(primaryId).catch(() => undefined);
+    });
+  } else {
+    const primaryId = store.config().primaryId;
+    if (primaryId) void sources.testSource(primaryId).catch(() => undefined);
+  }
 });
 
 let shuttingDown = false;
