@@ -1,11 +1,15 @@
 import {
+  ChevronRight,
   Disc3,
   FilePlus2,
   Heart,
   Library,
+  ListPlus,
   ListMusic,
+  Play,
   Settings2,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { Playlist, Quality, Track } from "../types";
 import { Artwork } from "./Artwork";
 import { EmptyState } from "./EmptyState";
@@ -47,6 +51,13 @@ export function LibraryView({
   onOpenSettings,
 }: LibraryViewProps) {
   const favoriteKeys = new Set(favorites.map((item) => item.key));
+  const [visibleTrackCount, setVisibleTrackCount] = useState(120);
+
+  useEffect(() => {
+    setVisibleTrackCount(120);
+  }, [selectedPlaylist?.id]);
+
+  const visibleTracks = selectedPlaylist?.tracks.slice(0, visibleTrackCount) ?? [];
 
   return (
     <div className="view library-view">
@@ -85,87 +96,153 @@ export function LibraryView({
         </div>
       </section>
 
-      <section className="content-section">
-        <div className="section-heading">
-          <div>
-            <h2>我的歌单</h2>
-            <p>从网易云导入的完整歌单</p>
-          </div>
-        </div>
-        {playlists.length ? (
-          <div className="playlist-grid">
-            {playlists.map((playlist) => (
+      {playlists.length ? (
+        <div className="library-workspace">
+          <aside className="playlist-rail" aria-label="歌单列表">
+            <div className="playlist-rail-heading">
+              <div>
+                <h2>我的歌单</h2>
+                <p>{playlists.length} 个导入歌单</p>
+              </div>
               <button
-                key={playlist.id}
-                className={`playlist-card ${
-                  selectedPlaylist?.id === playlist.id ? "selected" : ""
-                }`}
+                className="icon-button"
                 type="button"
-                onClick={() => onSelectPlaylist(playlist.id)}
+                title="导入歌单"
+                aria-label="导入歌单"
+                onClick={onOpenImport}
               >
-                <Artwork
-                  src={playlist.cover}
-                  alt={`${playlist.title} 封面`}
-                  title={playlist.title}
-                  rounded="medium"
-                />
-                <span>
-                  <strong>{playlist.title}</strong>
-                  <small>{playlist.trackCount} 首歌曲</small>
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <EmptyState
-            icon={Library}
-            title="歌单库还是空的"
-            description="前往“导入歌单”页面添加网易云歌单，导入后会保存在这里。"
-            action={{ label: "导入歌单", onClick: onOpenImport }}
-          />
-        )}
-      </section>
-
-      {selectedPlaylist && (
-        <section className="content-section playlist-detail">
-          <div className="playlist-hero">
-            <Artwork
-              src={selectedPlaylist.cover}
-              alt={`${selectedPlaylist.title} 封面`}
-              title={selectedPlaylist.title}
-              rounded="large"
-            />
-            <div>
-              <p className="eyebrow">导入歌单</p>
-              <h2>{selectedPlaylist.title}</h2>
-              <p>
-                {selectedPlaylist.creator} · {selectedPlaylist.trackCount} 首歌曲
-              </p>
-              <button
-                className="primary-button small"
-                type="button"
-                onClick={() => onPlay(selectedPlaylist.tracks[0], selectedPlaylist.tracks)}
-                disabled={!selectedPlaylist.tracks.length}
-              >
-                播放全部
+                <FilePlus2 />
               </button>
             </div>
+            <div className="playlist-rail-list">
+              {playlists.map((playlist) => (
+                <button
+                  key={playlist.id}
+                  className={`playlist-card ${
+                    selectedPlaylist?.id === playlist.id ? "selected" : ""
+                  }`}
+                  type="button"
+                  onClick={() => onSelectPlaylist(playlist.id)}
+                >
+                  <Artwork
+                    src={playlist.cover}
+                    alt={`${playlist.title} 封面`}
+                    title={playlist.title}
+                    rounded="medium"
+                  />
+                  <span className="playlist-card-copy">
+                    <strong>{playlist.title}</strong>
+                    <small>
+                      {playlist.trackCount} 首歌曲 · {playlist.creator}
+                    </small>
+                  </span>
+                  <ChevronRight className="playlist-card-chevron" aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <div className="playlist-stage">
+            {selectedPlaylist ? (
+              <section
+                className="playlist-detail"
+                aria-label={`${selectedPlaylist.title} 歌单详情`}
+              >
+                <div className="playlist-hero">
+                  <div className="playlist-hero-cover">
+                    <Artwork
+                      src={selectedPlaylist.cover}
+                      alt={`${selectedPlaylist.title} 封面`}
+                      title={selectedPlaylist.title}
+                      rounded="large"
+                    />
+                    <span>歌单</span>
+                  </div>
+                  <div className="playlist-hero-copy">
+                    <p className="eyebrow">导入歌单</p>
+                    <h2>{selectedPlaylist.title}</h2>
+                    <div className="playlist-meta-row">
+                      <span>{selectedPlaylist.creator}</span>
+                      <span>{selectedPlaylist.trackCount} 首歌曲</span>
+                    </div>
+                    <div className="playlist-actions">
+                      <button
+                        className="primary-button small"
+                        type="button"
+                        onClick={() =>
+                          onPlay(selectedPlaylist.tracks[0], selectedPlaylist.tracks)
+                        }
+                        disabled={!selectedPlaylist.tracks.length}
+                      >
+                        <Play fill="currentColor" />
+                        播放全部
+                      </button>
+                      <button
+                        className="secondary-button small"
+                        type="button"
+                        onClick={() => onAddAllToQueue(selectedPlaylist.tracks)}
+                        disabled={!selectedPlaylist.tracks.length}
+                      >
+                        <ListPlus />
+                        加入队列
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="playlist-track-heading">
+                  <div>
+                    <strong>歌曲列表</strong>
+                    <span>共 {selectedPlaylist.tracks.length} 首</span>
+                  </div>
+                </div>
+                <div className="track-table playlist-track-table">
+                  <TrackTableHeader />
+                  {visibleTracks.map((track, index) => (
+                    <TrackRow
+                      key={`${track.key}:${index}`}
+                      track={track}
+                      index={index}
+                      favorite={favoriteKeys.has(track.key)}
+                      onPlay={() => onPlay(track, selectedPlaylist.tracks)}
+                      onFavorite={() => onFavorite(track)}
+                      onAddToQueue={() => onAddAllToQueue([track])}
+                    />
+                  ))}
+                </div>
+                {visibleTracks.length < selectedPlaylist.tracks.length && (
+                  <div className="playlist-load-more">
+                    <span>
+                      已显示 {visibleTracks.length} / {selectedPlaylist.tracks.length} 首
+                    </span>
+                    <button
+                      className="secondary-button small"
+                      type="button"
+                      onClick={() => setVisibleTrackCount((value) => value + 120)}
+                    >
+                      加载更多歌曲
+                    </button>
+                  </div>
+                )}
+              </section>
+            ) : (
+              <div className="playlist-placeholder">
+                <span>
+                  <Library />
+                </span>
+                <strong>选择一个歌单</strong>
+                <p>从左侧选择歌单后，在这里查看歌曲列表。</p>
+              </div>
+            )}
           </div>
-          <div className="track-table">
-            <TrackTableHeader />
-            {selectedPlaylist.tracks.map((track, index) => (
-              <TrackRow
-                key={`${track.key}:${index}`}
-                track={track}
-                index={index}
-                favorite={favoriteKeys.has(track.key)}
-                onPlay={() => onPlay(track, selectedPlaylist.tracks)}
-                onFavorite={() => onFavorite(track)}
-                onAddToQueue={() => onAddAllToQueue([track])}
-              />
-            ))}
-          </div>
-        </section>
+        </div>
+      ) : (
+        <EmptyState
+          icon={Library}
+          title="歌单库还是空的"
+          description="前往“导入歌单”页面添加网易云歌单，导入后会保存在这里。"
+          action={{ label: "导入歌单", onClick: onOpenImport }}
+        />
       )}
 
       {recent.length > 0 && (

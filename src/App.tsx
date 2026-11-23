@@ -128,6 +128,17 @@ function App() {
     [favorites],
   );
 
+  useEffect(() => {
+    if (
+      libraryReady &&
+      view === "library" &&
+      !selectedPlaylistId &&
+      playlists.length > 0
+    ) {
+      setSelectedPlaylistId(playlists[0].id);
+    }
+  }, [libraryReady, playlists, selectedPlaylistId, view]);
+
   useEffect(
     () => () => {
       window.clearTimeout(toastTimerRef.current);

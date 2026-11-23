@@ -22,6 +22,15 @@ test("provider adapters produce the shared track shape", () => {
   assert.equal(netease?.platformMeta.lxSource, "wy");
   assert.equal(netease?.duration, 269);
 
+  const neteaseDetail = netEaseTrack({
+    id: 11,
+    name: "七里香",
+    ar: [{ name: "周杰伦" }],
+    al: { id: 12, name: "七里香", picUrl: "https://img.test/2.jpg" },
+    duration: 299000,
+  });
+  assert.equal(neteaseDetail?.duration, 299);
+
   const qq = qqTrack({
     mid: "qq-mid",
     id: 3,

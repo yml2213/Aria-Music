@@ -105,7 +105,7 @@ export function netEaseTrack(value: unknown): Track | undefined {
     artist: artists.join(" / ") || "未知歌手",
     album: text(album.name) || "未知专辑",
     cover: text(album.picUrl) || undefined,
-    duration: secondsFromDuration(item.dt),
+    duration: secondsFromDuration(item.dt ?? item.duration),
     platformMeta: {
       lxSource: "wy",
       songmid: String(item.id),
