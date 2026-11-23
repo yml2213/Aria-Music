@@ -1,17 +1,14 @@
 import { AudioLines, Monitor, Moon, Search, Sun, X } from "lucide-react";
 import type { FormEvent } from "react";
-import type { Provider, ThemeMode, ViewName } from "../types";
-import { PROVIDERS } from "../types";
+import type { ThemeMode, ViewName } from "../types";
 
 interface TopBarProps {
   view: ViewName;
   query: string;
-  provider: Provider;
   sourceConfigured: boolean;
   sourceStatus: "idle" | "ready" | "error";
   themeMode: ThemeMode;
   onQueryChange: (value: string) => void;
-  onProviderChange: (provider: Provider) => void;
   onSearch: () => void;
   onOpenSettings: () => void;
   onCycleTheme: () => void;
@@ -27,12 +24,10 @@ const titles: Record<ViewName, string> = {
 export function TopBar({
   view,
   query,
-  provider,
   sourceConfigured,
   sourceStatus,
   themeMode,
   onQueryChange,
-  onProviderChange,
   onSearch,
   onOpenSettings,
   onCycleTheme,
@@ -85,19 +80,6 @@ export function TopBar({
         ) : (
           <kbd>⌘ K</kbd>
         )}
-        <div className="provider-switch" role="group" aria-label="音乐平台">
-          {PROVIDERS.map((item) => (
-            <button
-              key={item.id}
-              className={provider === item.id ? "active" : ""}
-              type="button"
-              onClick={() => onProviderChange(item.id)}
-              title={item.name}
-            >
-              {item.shortName}
-            </button>
-          ))}
-        </div>
         <button className="search-submit" type="submit" title="搜索" aria-label="搜索">
           <Search />
         </button>

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  interleaveTracks,
   kugouTrack,
   kuwoTrack,
   netEaseTrack,
@@ -85,4 +86,22 @@ test("lyrics parser handles multiple timestamps and lookup", () => {
   );
   assert.equal(currentLyricIndex(lines, 3.6), 1);
   assert.equal(currentLyricIndex(lines, 6), 2);
+});
+
+test("combined search interleaves provider result buckets", () => {
+  const tracks = ["netease", "qq", "kugou", "kuwo"].map((provider) =>
+    [0, 1].map((index) => ({
+      key: `${provider}:${index}`,
+      provider: provider as "netease" | "qq" | "kugou" | "kuwo",
+      id: String(index),
+      title: `${provider}-${index}`,
+      artist: "artist",
+      album: "album",
+      platformMeta: { lxSource: "wy" as const, songmid: String(index) },
+    })),
+  );
+  assert.deepEqual(
+    interleaveTracks(tracks, 6).map((track) => track.key),
+    ["netease:0", "qq:0", "kugou:0", "kuwo:0", "netease:1", "qq:1"],
+  );
 });

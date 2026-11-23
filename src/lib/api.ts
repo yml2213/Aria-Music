@@ -3,6 +3,7 @@ import type {
   Playlist,
   Provider,
   Quality,
+  SearchProvider,
   SourceConfig,
   SourceRecommendation,
   Track,
@@ -14,6 +15,7 @@ interface ApiErrorPayload {
 
 interface SearchResponse {
   tracks: Track[];
+  errors?: Array<{ provider: Provider; message: string }>;
 }
 
 export interface ResolvedTrack {
@@ -75,12 +77,11 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
-export async function searchTracks(provider: Provider, query: string) {
+export async function searchTracks(provider: SearchProvider, query: string) {
   const url = new URL("/api/search", window.location.origin);
   url.searchParams.set("provider", provider);
   url.searchParams.set("q", query);
-  const payload = await requestJson<SearchResponse>(url.pathname + url.search);
-  return payload.tracks;
+  return requestJson<SearchResponse>(url.pathname + url.search);
 }
 
 export async function resolveTrack(

@@ -1,6 +1,5 @@
 import { LoaderCircle, Search, SlidersHorizontal, Sparkles } from "lucide-react";
 import type { SearchState, Track } from "../types";
-import { PROVIDERS } from "../types";
 import { EmptyState } from "./EmptyState";
 import { TrackRow } from "./TrackRow";
 import { TrackTableHeader } from "./TrackTableHeader";
@@ -9,7 +8,6 @@ interface SearchViewProps {
   search: SearchState;
   favorites: Track[];
   onSearch: (query?: string) => void;
-  onProviderChange: (provider: SearchState["provider"]) => void;
   onPlay: (track: Track, queue: Track[]) => void;
   onFavorite: (track: Track) => void;
   onAddAllToQueue: (tracks: Track[]) => void;
@@ -21,33 +19,18 @@ export function SearchView({
   search,
   favorites,
   onSearch,
-  onProviderChange,
   onPlay,
   onFavorite,
   onAddAllToQueue,
 }: SearchViewProps) {
   const favoriteKeys = new Set(favorites.map((item) => item.key));
-  const provider = PROVIDERS.find((item) => item.id === search.provider) ?? PROVIDERS[0];
 
   return (
     <div className="view search-view">
       <div className="view-heading">
         <div>
-          <p className="eyebrow">{provider.name}</p>
+          <p className="eyebrow">联合搜索</p>
           <h1>{search.query ? `“${search.query}”` : "搜索音乐"}</h1>
-        </div>
-        <div className="provider-tabs" role="group" aria-label="选择音乐平台">
-          {PROVIDERS.map((item) => (
-            <button
-              key={item.id}
-              className={item.id === search.provider ? "active" : ""}
-              type="button"
-              onClick={() => onProviderChange(item.id)}
-            >
-              <span style={{ backgroundColor: item.tone }} />
-              {item.name}
-            </button>
-          ))}
         </div>
       </div>
 
@@ -57,8 +40,8 @@ export function SearchView({
             <Search />
             <Sparkles />
           </div>
-          <h2>搜索四个平台的音乐</h2>
-          <p>试试下面这些关键词，歌曲、歌手和专辑都可以搜索。</p>
+          <h2>一次搜索四个平台</h2>
+          <p>网易云、QQ、酷狗和酷我会并行返回结果。</p>
           <div className="suggestion-row">
             {suggestions.map((item) => (
               <button key={item} type="button" onClick={() => onSearch(item)}>
@@ -81,7 +64,7 @@ export function SearchView({
       {search.loading && (
         <div className="search-loading">
           <LoaderCircle className="spin" />
-          <span>正在搜索 {provider.name}</span>
+          <span>正在搜索全部音乐平台</span>
           <div className="loading-lines">
             {[0, 1, 2, 3, 4].map((item) => (
               <span key={item} />
@@ -96,7 +79,7 @@ export function SearchView({
             <div>
               <h2>搜索结果</h2>
               <p>
-                {search.results.length} 首歌曲 · 来自 {provider.name}
+                {search.results.length} 首歌曲 · 来自四个音乐平台
               </p>
             </div>
             <button

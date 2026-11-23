@@ -98,7 +98,15 @@ async function mockMusicServices(page: Page) {
     if (url.pathname === "/api/search") {
       const provider = url.searchParams.get("provider") || "netease";
       const tracks =
-        provider === "netease"
+        provider === "all"
+          ? [
+              track("netease", "186016", "晴天", "周杰伦"),
+              track("netease", "186017", "七里香", "周杰伦"),
+              track("qq", "qq-id", "夜曲", "周杰伦"),
+              track("kugou", "kugou-id", "稻香", "周杰伦"),
+              track("kuwo", "kuwo-id", "洋葱", "周杰伦"),
+            ]
+          : provider === "netease"
           ? [
               track("netease", "186016", "晴天", "周杰伦"),
               track("netease", "186017", "七里香", "周杰伦"),
@@ -192,7 +200,7 @@ test("search, playback, lyrics, and playlist import", async ({ page }) => {
   await page.goto("/");
   await page.locator("#global-search-input").fill("晴天");
   await page.locator(".search-submit").click();
-  await expect(page.locator(".track-row")).toHaveCount(2);
+  await expect(page.locator(".track-row")).toHaveCount(5);
   await expect(page.locator(".track-row").first()).toContainText("晴天");
 
   await page.locator(".track-row").first().click();
@@ -224,21 +232,18 @@ test("mobile layout still avoids horizontal overflow", async ({ page }) => {
   expect(hasHorizontalOverflow).toBe(false);
 });
 
-test("QQ, Kugou, and Kuwo search results use the shared player", async ({ page }) => {
+test("combined search returns all providers through the shared player", async ({ page }) => {
   await mockMusicServices(page);
   await page.goto("/");
-  for (const provider of [
-    { button: "QQ", query: "夜曲", title: "夜曲" },
-    { button: "酷狗", query: "稻香", title: "稻香" },
-    { button: "酷我", query: "洋葱", title: "洋葱" },
-  ]) {
-    await page.locator(".provider-switch").getByRole("button", { name: provider.button }).click();
-    await page.locator("#global-search-input").fill(provider.query);
-    await page.locator(".search-submit").click();
-    await expect(page.locator(".track-row").first()).toContainText(provider.title);
-    await page.locator(".track-row").first().click();
-    await expect(page.locator(".player-meta strong")).toHaveText(provider.title);
+  await page.locator("#global-search-input").fill("周杰伦");
+  await page.locator(".search-submit").click();
+  await expect(page.locator(".track-row")).toHaveCount(5);
+  for (const text of ["网易云", "QQ", "酷狗", "酷我"]) {
+    await expect(page.locator(".track-table")).toContainText(text);
   }
+  const qqRow = page.locator(".track-row").filter({ hasText: "夜曲" });
+  await qqRow.click();
+  await expect(page.locator(".player-meta strong")).toHaveText("夜曲");
 });
 
 test("theme toggle follows system preference and persists explicit modes", async ({ page }) => {

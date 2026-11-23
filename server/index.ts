@@ -8,7 +8,12 @@ import { MediaProxy } from "./media-proxy";
 import { seedDefaultSources } from "./default-source-seeder";
 import { DEFAULT_SOURCES } from "./default-sources";
 import { requestPublicText } from "./remote";
-import { getLyric, importNeteasePlaylist, searchTracks } from "./search";
+import {
+  getLyric,
+  importNeteasePlaylist,
+  searchAllTracks,
+  searchTracks,
+} from "./search";
 import {
   applySecurityHeaders,
   authConfigFromEnv,
@@ -145,17 +150,24 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     return true;
   }
   if (request.method === "GET" && url.pathname === "/api/search") {
-    const provider = url.searchParams.get("provider") as Provider | null;
+    const requestedProvider = url.searchParams.get("provider") ?? "all";
     const query = url.searchParams.get("q")?.trim() ?? "";
-    if (!provider || !providerIds.has(provider)) {
+    if (requestedProvider !== "all" && !providerIds.has(requestedProvider as Provider)) {
       throw new HttpError("不支持的搜索平台", 400);
     }
     if (!query) {
-      json(response, 200, { tracks: [] });
+      json(response, 200, { tracks: [], errors: [] });
       return true;
     }
     if (query.length > 200) throw new HttpError("搜索关键词过长", 400);
-    json(response, 200, { tracks: await searchTracks(provider, query, 30) });
+    if (requestedProvider === "all") {
+      json(response, 200, await searchAllTracks(query, 40));
+    } else {
+      json(response, 200, {
+        tracks: await searchTracks(requestedProvider as Provider, query, 30),
+        errors: [],
+      });
+    }
     return true;
   }
   if (request.method === "POST" && url.pathname === "/api/track/resolve") {

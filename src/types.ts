@@ -1,5 +1,7 @@
 export type Provider = "netease" | "qq" | "kugou" | "kuwo";
 
+export type SearchProvider = Provider | "all";
+
 export type ViewName = "home" | "search" | "import" | "library";
 
 export type Quality = "standard" | "lossless" | "hires" | "jymaster";
@@ -74,7 +76,7 @@ export interface LyricLine {
 
 export interface SearchState {
   query: string;
-  provider: Provider;
+  provider: SearchProvider;
   results: Track[];
   loading: boolean;
   error: string;

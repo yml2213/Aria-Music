@@ -65,10 +65,9 @@ function App() {
   const [quality, setQuality] = useState<Quality>(() => storage.getQuality());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [provider, setProvider] = useState<SearchState["provider"]>("netease");
   const [search, setSearch] = useState<SearchState>({
     query: "",
-    provider: "netease",
+    provider: "all",
     results: [],
     loading: false,
     error: "",
@@ -218,19 +217,16 @@ function App() {
   };
 
   const performSearch = useCallback(
-    async (
-      rawQuery = query,
-      targetProvider: SearchState["provider"] = provider,
-    ) => {
+    async (rawQuery = query) => {
       const keyword = rawQuery.trim();
       if (!keyword) {
         document.getElementById("global-search-input")?.focus();
         return;
       }
+      const targetProvider: SearchState["provider"] = "all";
       const requestId = ++searchRequestRef.current;
       setView("search");
       setQuery(keyword);
-      setProvider(targetProvider);
       setSearch({
         query: keyword,
         provider: targetProvider,
@@ -240,14 +236,19 @@ function App() {
       });
 
       try {
-        const results = await searchTracks(targetProvider, keyword);
+        const response = await searchTracks(targetProvider, keyword);
         if (requestId !== searchRequestRef.current) return;
+        const results = response.tracks;
         setSearch({
           query: keyword,
           provider: targetProvider,
           results,
           loading: false,
-          error: results.length ? "" : "没有找到匹配的歌曲，换个关键词试试。",
+          error: results.length
+            ? ""
+            : response.errors?.length
+              ? "部分音乐平台暂时不可用，其他平台也没有匹配结果。"
+              : "没有找到匹配的歌曲，换个关键词试试。",
         });
       } catch (error) {
         if (requestId !== searchRequestRef.current) return;
@@ -260,7 +261,7 @@ function App() {
         });
       }
     },
-    [provider, query],
+    [query],
   );
 
   const markRecent = useCallback((track: Track) => {
@@ -435,16 +436,6 @@ function App() {
     setQueue([]);
     showToast("播放队列已清空");
   }, [showToast]);
-
-  const updateProvider = useCallback((nextProvider: SearchState["provider"]) => {
-    setProvider(nextProvider);
-    setSearch((previous) => ({
-      ...previous,
-      provider: nextProvider,
-      results: [],
-      error: "",
-    }));
-  }, []);
 
   const navigate = (nextView: ViewName) => {
     setView(nextView);
@@ -640,7 +631,7 @@ function App() {
           onNavigateSearch={navigateSearch}
           onNavigateImport={() => navigate("import")}
           onNavigateLibrary={() => navigate("library")}
-          onQuickSearch={(value) => void performSearch(value, "netease")}
+          onQuickSearch={(value) => void performSearch(value)}
           onPlay={(track, context) => void playTrack(track, context)}
         />
       );
@@ -651,8 +642,7 @@ function App() {
         <SearchView
           search={search}
           favorites={favorites}
-          onSearch={(value) => void performSearch(value ?? query, provider)}
-          onProviderChange={updateProvider}
+          onSearch={(value) => void performSearch(value ?? query)}
           onPlay={(track, context) => void playTrack(track, context)}
           onFavorite={toggleFavorite}
           onAddAllToQueue={addToQueue}
@@ -705,12 +695,10 @@ function App() {
         <TopBar
           view={view}
           query={query}
-          provider={provider}
           sourceConfigured={sourceConfigured}
           sourceStatus={playbackSourceStatus}
           themeMode={themeMode}
           onQueryChange={setQuery}
-          onProviderChange={updateProvider}
           onSearch={() => void performSearch()}
           onOpenSettings={() => setSettingsOpen(true)}
           onCycleTheme={cycleTheme}

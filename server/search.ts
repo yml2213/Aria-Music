@@ -426,6 +426,57 @@ export async function searchTracks(provider: Provider, query: string, limit = 30
   return searchKuwo(query.trim(), limit);
 }
 
+const SEARCH_PROVIDERS: Provider[] = ["netease", "qq", "kugou", "kuwo"];
+
+export function interleaveTracks(buckets: Track[][], limit: number) {
+  const tracks: Track[] = [];
+  for (let index = 0; tracks.length < limit; index += 1) {
+    let added = false;
+    for (const bucket of buckets) {
+      const track = bucket[index];
+      if (!track) continue;
+      tracks.push(track);
+      added = true;
+      if (tracks.length >= limit) break;
+    }
+    if (!added) break;
+  }
+  return tracks;
+}
+
+export async function searchAllTracks(query: string, limit = 40) {
+  const keyword = query.trim();
+  if (!keyword) return { tracks: [] as Track[], errors: [] };
+  const perProvider = Math.max(8, Math.ceil(limit / SEARCH_PROVIDERS.length));
+  const settled = await Promise.allSettled(
+    SEARCH_PROVIDERS.map((provider) =>
+      searchTracks(provider, keyword, perProvider),
+    ),
+  );
+  const buckets: Track[][] = [];
+  const errors: Array<{ provider: Provider; message: string }> = [];
+  settled.forEach((result, index) => {
+    const provider = SEARCH_PROVIDERS[index];
+    if (result.status === "fulfilled") {
+      buckets.push(result.value);
+    } else {
+      buckets.push([]);
+      errors.push({
+        provider,
+        message:
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason),
+      });
+    }
+  });
+  if (errors.length === SEARCH_PROVIDERS.length) {
+    throw new HttpError(`联合搜索失败：${errors[0]?.message ?? "所有平台均不可用"}`);
+  }
+
+  return { tracks: interleaveTracks(buckets, limit), errors };
+}
+
 async function netEaseLyric(track: Track) {
   const payload = await requestJson<UnknownRecord>(
     `https://music.163.com/api/song/lyric?id=${encodeURIComponent(
