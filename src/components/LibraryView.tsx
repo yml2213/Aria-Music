@@ -7,10 +7,9 @@ import {
   ListPlus,
   ListMusic,
   Play,
-  Settings2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { Playlist, Quality, Track } from "../types";
+import type { Playlist, Track } from "../types";
 import { Artwork } from "./Artwork";
 import { EmptyState } from "./EmptyState";
 import { TrackRow } from "./TrackRow";
@@ -21,34 +20,23 @@ interface LibraryViewProps {
   favorites: Track[];
   recent: Track[];
   selectedPlaylist?: Playlist;
-  quality: Quality;
   onSelectPlaylist: (id: string) => void;
   onOpenImport: () => void;
   onPlay: (track: Track, queue: Track[]) => void;
   onFavorite: (track: Track) => void;
   onAddAllToQueue: (tracks: Track[]) => void;
-  onOpenSettings: () => void;
 }
-
-const qualityLabels: Record<Quality, string> = {
-  standard: "标准音质",
-  lossless: "无损音质",
-  hires: "高解析度",
-  jymaster: "超清母带",
-};
 
 export function LibraryView({
   playlists,
   favorites,
   recent,
   selectedPlaylist,
-  quality,
   onSelectPlaylist,
   onOpenImport,
   onPlay,
   onFavorite,
   onAddAllToQueue,
-  onOpenSettings,
 }: LibraryViewProps) {
   const favoriteKeys = new Set(favorites.map((item) => item.key));
   const [visibleTrackCount, setVisibleTrackCount] = useState(120);
@@ -70,10 +58,6 @@ export function LibraryView({
           <button className="secondary-button" type="button" onClick={onOpenImport}>
             <FilePlus2 />
             导入歌单
-          </button>
-          <button className="secondary-button" type="button" onClick={onOpenSettings}>
-            <Settings2 />
-            {qualityLabels[quality]}
           </button>
         </div>
       </div>

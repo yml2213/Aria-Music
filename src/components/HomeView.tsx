@@ -15,7 +15,6 @@ interface HomeViewProps {
   sourceConfigured: boolean;
   recent: Track[];
   favorites: Track[];
-  onOpenSettings: () => void;
   onNavigateSearch: () => void;
   onNavigateImport: () => void;
   onNavigateLibrary: () => void;
@@ -44,7 +43,6 @@ export function HomeView({
   sourceConfigured,
   recent,
   favorites,
-  onOpenSettings,
   onNavigateSearch,
   onNavigateImport,
   onNavigateLibrary,
@@ -71,12 +69,8 @@ export function HomeView({
           </span>
           <div>
             <h2>添加一个播放音源</h2>
-            <p>搜索和歌词已经独立可用，导入洛雪音源后即可播放。</p>
+            <p>搜索和歌词已经独立可用，配置音源后即可播放。</p>
           </div>
-          <button className="primary-button" type="button" onClick={onOpenSettings}>
-            管理音源
-            <ArrowRight />
-          </button>
         </section>
       )}
 

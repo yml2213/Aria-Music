@@ -1,16 +1,13 @@
-import { AudioLines, Monitor, Moon, Search, Sun, X } from "lucide-react";
+import { Monitor, Moon, Search, Sun, X } from "lucide-react";
 import type { FormEvent } from "react";
 import type { ThemeMode, ViewName } from "../types";
 
 interface TopBarProps {
   view: ViewName;
   query: string;
-  sourceConfigured: boolean;
-  sourceStatus: "idle" | "ready" | "error";
   themeMode: ThemeMode;
   onQueryChange: (value: string) => void;
   onSearch: () => void;
-  onOpenSettings: () => void;
   onCycleTheme: () => void;
 }
 
@@ -24,12 +21,9 @@ const titles: Record<ViewName, string> = {
 export function TopBar({
   view,
   query,
-  sourceConfigured,
-  sourceStatus,
   themeMode,
   onQueryChange,
   onSearch,
-  onOpenSettings,
   onCycleTheme,
 }: TopBarProps) {
   const submit = (event: FormEvent) => {
@@ -37,14 +31,6 @@ export function TopBar({
     onSearch();
   };
 
-  const connectionLabel =
-    sourceStatus === "ready"
-      ? "音源已就绪"
-      : sourceStatus === "error"
-        ? "音源异常"
-        : sourceConfigured
-          ? "音源待检测"
-          : "添加音源";
   const themeLabel =
     themeMode === "system"
       ? "主题：跟随系统"
@@ -92,19 +78,6 @@ export function TopBar({
         onClick={onCycleTheme}
       >
         <ThemeIcon />
-      </button>
-      <button
-        className={`api-connection ${sourceStatus === "ready" ? "connected" : ""} ${
-          sourceStatus === "error" ? "invalid" : ""
-        }`}
-        type="button"
-        aria-label={connectionLabel}
-        title={connectionLabel}
-        onClick={onOpenSettings}
-      >
-        <span className="api-connection-dot" />
-        <span>{connectionLabel}</span>
-        <AudioLines />
       </button>
     </header>
   );

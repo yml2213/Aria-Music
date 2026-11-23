@@ -627,7 +627,6 @@ function App() {
           sourceConfigured={sourceConfigured}
           recent={recent}
           favorites={favorites}
-          onOpenSettings={() => setSettingsOpen(true)}
           onNavigateSearch={navigateSearch}
           onNavigateImport={() => navigate("import")}
           onNavigateLibrary={() => navigate("library")}
@@ -667,13 +666,11 @@ function App() {
         favorites={favorites}
         recent={recent}
         selectedPlaylist={selectedPlaylist}
-        quality={quality}
         onSelectPlaylist={setSelectedPlaylistId}
         onOpenImport={() => navigate("import")}
         onPlay={(track, context) => void playTrack(track, context)}
         onFavorite={toggleFavorite}
         onAddAllToQueue={addToQueue}
-        onOpenSettings={() => setSettingsOpen(true)}
       />
     );
   };
@@ -695,12 +692,9 @@ function App() {
         <TopBar
           view={view}
           query={query}
-          sourceConfigured={sourceConfigured}
-          sourceStatus={playbackSourceStatus}
           themeMode={themeMode}
           onQueryChange={setQuery}
           onSearch={() => void performSearch()}
-          onOpenSettings={() => setSettingsOpen(true)}
           onCycleTheme={cycleTheme}
         />
         <main className="app-content">{renderView()}</main>
