@@ -1,8 +1,12 @@
 node_modules
 dist
+dist-server
 data
 test-results
 playwright-report
 .DS_Store
 .openidea
+.env
+.env.*
+!.env.example
 *.local

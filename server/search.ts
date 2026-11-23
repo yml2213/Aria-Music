@@ -89,7 +89,7 @@ function qualityMapFromNetEase(item: UnknownRecord) {
   return { qualitys, qualityMap };
 }
 
-function netEaseTrack(value: unknown): Track | undefined {
+export function netEaseTrack(value: unknown): Track | undefined {
   const item = record(value);
   if (!item.id) return undefined;
   const artists = array(item.ar ?? item.artists)
@@ -148,7 +148,7 @@ async function searchNetEase(query: string, limit: number) {
     .filter((track): track is Track => Boolean(track));
 }
 
-function qqTrack(value: unknown): Track | undefined {
+export function qqTrack(value: unknown): Track | undefined {
   const item = record(value);
   const file = record(item.file);
   const songmid = text(item.mid);
@@ -263,7 +263,7 @@ async function searchQq(query: string, limit: number) {
     .filter((track): track is Track => Boolean(track));
 }
 
-function kugouTrack(value: unknown, sourceIndex: number): Track | undefined {
+export function kugouTrack(value: unknown, sourceIndex: number): Track | undefined {
   const item = record(value);
   const hash = text(item.FileHash);
   const songmid = text(item.Audioid);
@@ -348,7 +348,7 @@ async function searchKugou(query: string, limit: number) {
   return tracks.slice(0, limit);
 }
 
-function kuwoTrack(value: unknown, sourceIndex: number): Track | undefined {
+export function kuwoTrack(value: unknown, sourceIndex: number): Track | undefined {
   const item = record(value);
   const songId = text(item.MUSICRID).replace(/^MUSIC_/, "") || text(item.DC_TARGETID);
   if (!songId) return undefined;
@@ -503,13 +503,18 @@ async function kugouLyric(track: Track) {
 }
 
 async function kuwoLyric(track: Track) {
-  const payload = await requestJson<UnknownRecord>(
-    `https://m.kuwo.cn/newh5/singles/songinfoandlrc?musicId=${encodeURIComponent(
-      track.platformMeta.songmid,
-    )}`,
-    {},
-    12_000,
-  ).catch(() => ({}) as UnknownRecord);
+  let payload = {} as UnknownRecord;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    payload = await requestJson<UnknownRecord>(
+      `https://m.kuwo.cn/newh5/singles/songinfoandlrc?musicId=${encodeURIComponent(
+        track.platformMeta.songmid,
+      )}&_=${Date.now()}`,
+      {},
+      12_000,
+    ).catch(() => ({}) as UnknownRecord);
+    if (Array.isArray(record(payload.data).lrclist)) break;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
   const lines = array(record(payload.data).lrclist)
     .map((line) => {
       const item = record(line);
@@ -524,10 +529,14 @@ async function kuwoLyric(track: Track) {
   return { lyric: lines.join("\n"), translatedLyric: "" };
 }
 
-const lyricCache = new Map<string, { expiresAt: number; value: { lyric: string; translatedLyric: string } }>();
+const MAX_LYRIC_CACHE_ENTRIES = 500;
+const lyricCache = new Map<
+  string,
+  { expiresAt: number; value: { lyric: string; translatedLyric: string } }
+>();
 
 export async function getLyric(track: Track) {
-  const key = `${track.provider}:${track.id}`;
+  const key = track.key || `${track.provider}:${track.id}`;
   const cached = lyricCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   let value = { lyric: "", translatedLyric: "" };
@@ -539,7 +548,16 @@ export async function getLyric(track: Track) {
   } catch {
     value = { lyric: "", translatedLyric: "" };
   }
-  lyricCache.set(key, { expiresAt: Date.now() + 10 * 60_000, value });
+  lyricCache.delete(key);
+  lyricCache.set(key, {
+    expiresAt: Date.now() + (value.lyric ? 30 * 60_000 : 30_000),
+    value,
+  });
+  while (lyricCache.size > MAX_LYRIC_CACHE_ENTRIES) {
+    const oldest = lyricCache.keys().next().value;
+    if (typeof oldest !== "string") break;
+    lyricCache.delete(oldest);
+  }
   return value;
 }
 

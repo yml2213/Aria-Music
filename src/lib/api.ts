@@ -19,6 +19,7 @@ interface SearchResponse {
 export interface ResolvedTrack {
   track: Track;
   url: string;
+  remoteUrl?: string;
   quality: LxQuality;
   sourceId: string;
   sourceName: string;

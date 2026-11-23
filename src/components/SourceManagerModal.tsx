@@ -12,8 +12,9 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { getSourceRecommendations } from "../lib/api";
+import { useDialogFocus } from "../lib/use-dialog-focus";
 import type {
   LxSource,
   Quality,
@@ -194,6 +195,9 @@ export function SourceManagerModal({
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState("");
   const [feedback, setFeedback] = useState("");
+  const dialogRef = useRef<HTMLElement>(null);
+
+  useDialogFocus(open, onClose, dialogRef);
 
   const syncConfig = (next: SourceConfig) => {
     setConfig(next);
@@ -215,15 +219,6 @@ export function SourceManagerModal({
       .then(setRecommendations)
       .catch(() => setRecommendations([]));
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose, open]);
 
   if (!open) return null;
 
@@ -340,10 +335,12 @@ export function SourceManagerModal({
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section
+        ref={dialogRef}
         className="settings-modal source-settings-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
+        tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="modal-heading">
@@ -368,7 +365,7 @@ export function SourceManagerModal({
         <div className="source-warning">
           <ShieldAlert />
           <span>
-            自定义音源是第三方 JavaScript。脚本仅在独立 Worker 中运行，但仍建议只导入你信任的来源。
+            自定义音源是第三方 JavaScript。脚本在受限子进程中运行，但仍建议只导入你信任的来源。
           </span>
         </div>
 

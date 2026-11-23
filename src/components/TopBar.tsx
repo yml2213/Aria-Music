@@ -20,6 +20,7 @@ interface TopBarProps {
 const titles: Record<ViewName, string> = {
   home: "发现",
   search: "搜索",
+  import: "导入歌单",
   library: "我的音乐",
 };
 

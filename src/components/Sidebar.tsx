@@ -1,7 +1,7 @@
 import {
   Compass,
+  FilePlus2,
   Library,
-  ListMusic,
   Music2,
   Search,
   Settings2,
@@ -22,6 +22,7 @@ interface SidebarProps {
 const navigation = [
   { id: "home" as const, label: "发现", icon: Compass },
   { id: "search" as const, label: "搜索", icon: Search },
+  { id: "import" as const, label: "导入歌单", icon: FilePlus2 },
   { id: "library" as const, label: "我的音乐", icon: Library },
 ];
 
@@ -87,9 +88,9 @@ export function Sidebar({
             type="button"
             title="导入歌单"
             aria-label="导入歌单"
-            onClick={() => onNavigate("library")}
+            onClick={() => onNavigate("import")}
           >
-            <ListMusic />
+            <FilePlus2 />
           </button>
         </div>
         {playlists.length ? (

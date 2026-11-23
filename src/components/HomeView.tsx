@@ -17,6 +17,7 @@ interface HomeViewProps {
   favorites: Track[];
   onOpenSettings: () => void;
   onNavigateSearch: () => void;
+  onNavigateImport: () => void;
   onNavigateLibrary: () => void;
   onQuickSearch: (query: string) => void;
   onPlay: (track: Track, queue: Track[]) => void;
@@ -45,6 +46,7 @@ export function HomeView({
   favorites,
   onOpenSettings,
   onNavigateSearch,
+  onNavigateImport,
   onNavigateLibrary,
   onQuickSearch,
   onPlay,
@@ -69,7 +71,7 @@ export function HomeView({
           </span>
           <div>
             <h2>添加一个播放音源</h2>
-            <p>搜索和歌词已经独立可用，导入洛雪音源后即可播放和下载。</p>
+            <p>搜索和歌词已经独立可用，导入洛雪音源后即可播放。</p>
           </div>
           <button className="primary-button" type="button" onClick={onOpenSettings}>
             管理音源
@@ -107,7 +109,7 @@ export function HomeView({
             <p>继续上次没有听完的音乐</p>
           </div>
           {recent.length > 0 && (
-            <button className="text-button" type="button" onClick={onNavigateSearch}>
+            <button className="text-button" type="button" onClick={onNavigateLibrary}>
               查看全部
               <ArrowRight />
             </button>
@@ -189,8 +191,8 @@ export function HomeView({
             <h2>把歌单带进来</h2>
             <p>使用网易云歌单 ID 导入完整曲目，和单曲一起加入播放队列。</p>
           </div>
-          <button className="secondary-button" type="button" onClick={onNavigateLibrary}>
-            前往我的音乐
+          <button className="secondary-button" type="button" onClick={onNavigateImport}>
+            前往导入
             <ArrowRight />
           </button>
         </div>

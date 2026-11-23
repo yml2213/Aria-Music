@@ -38,16 +38,13 @@ export function TrackRow({
   return (
     <div
       className={`track-row ${active ? "active" : ""} ${compact ? "compact" : ""}`}
-      role="button"
-      tabIndex={0}
-      onClick={onPlay}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onPlay();
-        }
-      }}
     >
+      <button
+        className="track-row-play"
+        type="button"
+        aria-label={`播放 ${track.title} - ${track.artist}`}
+        onClick={onPlay}
+      />
       <span className="track-number">
         <span className="track-index">{(index + 1).toString().padStart(2, "0")}</span>
         <span className="track-play">

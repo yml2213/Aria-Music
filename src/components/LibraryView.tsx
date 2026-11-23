@@ -1,18 +1,16 @@
 import {
-  ArrowRight,
   Disc3,
+  FilePlus2,
   Heart,
   Library,
   ListMusic,
-  LoaderCircle,
-  Plus,
   Settings2,
 } from "lucide-react";
-import { useState, type FormEvent } from "react";
 import type { Playlist, Quality, Track } from "../types";
 import { Artwork } from "./Artwork";
 import { EmptyState } from "./EmptyState";
 import { TrackRow } from "./TrackRow";
+import { TrackTableHeader } from "./TrackTableHeader";
 
 interface LibraryViewProps {
   playlists: Playlist[];
@@ -21,7 +19,7 @@ interface LibraryViewProps {
   selectedPlaylist?: Playlist;
   quality: Quality;
   onSelectPlaylist: (id: string) => void;
-  onImportPlaylist: (id: string) => Promise<void>;
+  onOpenImport: () => void;
   onPlay: (track: Track, queue: Track[]) => void;
   onFavorite: (track: Track) => void;
   onAddAllToQueue: (tracks: Track[]) => void;
@@ -42,27 +40,13 @@ export function LibraryView({
   selectedPlaylist,
   quality,
   onSelectPlaylist,
-  onImportPlaylist,
+  onOpenImport,
   onPlay,
   onFavorite,
   onAddAllToQueue,
   onOpenSettings,
 }: LibraryViewProps) {
-  const [playlistId, setPlaylistId] = useState("");
-  const [importing, setImporting] = useState(false);
   const favoriteKeys = new Set(favorites.map((item) => item.key));
-
-  const submitImport = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!playlistId.trim() || importing) return;
-    setImporting(true);
-    try {
-      await onImportPlaylist(playlistId.trim());
-      setPlaylistId("");
-    } finally {
-      setImporting(false);
-    }
-  };
 
   return (
     <div className="view library-view">
@@ -71,56 +55,33 @@ export function LibraryView({
           <p className="eyebrow">你的音乐空间</p>
           <h1>我的音乐</h1>
         </div>
-        <button className="secondary-button" type="button" onClick={onOpenSettings}>
-          <Settings2 />
-          {qualityLabels[quality]}
-        </button>
+        <div className="view-heading-actions">
+          <button className="secondary-button" type="button" onClick={onOpenImport}>
+            <FilePlus2 />
+            导入歌单
+          </button>
+          <button className="secondary-button" type="button" onClick={onOpenSettings}>
+            <Settings2 />
+            {qualityLabels[quality]}
+          </button>
+        </div>
       </div>
 
-      <section className="library-layout">
-        <div className="import-panel">
-          <span className="import-panel-icon">
-            <Plus />
-          </span>
-          <div className="import-copy">
-            <h2>导入网易云歌单</h2>
-            <p>粘贴歌单 ID，获取歌单信息和完整曲目。</p>
-            <form onSubmit={submitImport}>
-              <input
-                value={playlistId}
-                onChange={(event) => setPlaylistId(event.target.value)}
-                inputMode="numeric"
-                placeholder="例如 5202687076"
-                aria-label="网易云歌单 ID"
-              />
-              <button
-                className="primary-button small"
-                type="submit"
-                disabled={!playlistId.trim() || importing}
-              >
-                {importing ? <LoaderCircle className="spin" /> : <ArrowRight />}
-                {importing ? "导入中" : "导入"}
-              </button>
-            </form>
-          </div>
+      <section className="library-summary library-summary-wide">
+        <div>
+          <Heart />
+          <strong>{favorites.length}</strong>
+          <span>收藏歌曲</span>
         </div>
-
-        <div className="library-summary">
-          <div>
-            <Heart />
-            <strong>{favorites.length}</strong>
-            <span>收藏歌曲</span>
-          </div>
-          <div>
-            <ListMusic />
-            <strong>{playlists.length}</strong>
-            <span>导入歌单</span>
-          </div>
-          <div>
-            <Disc3 />
-            <strong>{recent.length}</strong>
-            <span>最近播放</span>
-          </div>
+        <div>
+          <ListMusic />
+          <strong>{playlists.length}</strong>
+          <span>我的歌单</span>
+        </div>
+        <div>
+          <Disc3 />
+          <strong>{recent.length}</strong>
+          <span>最近播放</span>
         </div>
       </section>
 
@@ -159,7 +120,8 @@ export function LibraryView({
           <EmptyState
             icon={Library}
             title="歌单库还是空的"
-            description="在上方输入一个网易云歌单 ID，导入后会保存在浏览器中。"
+            description="前往“导入歌单”页面添加网易云歌单，导入后会保存在这里。"
+            action={{ label: "导入歌单", onClick: onOpenImport }}
           />
         )}
       </section>
@@ -190,6 +152,7 @@ export function LibraryView({
             </div>
           </div>
           <div className="track-table">
+            <TrackTableHeader />
             {selectedPlaylist.tracks.map((track, index) => (
               <TrackRow
                 key={`${track.key}:${index}`}
@@ -197,6 +160,31 @@ export function LibraryView({
                 index={index}
                 favorite={favoriteKeys.has(track.key)}
                 onPlay={() => onPlay(track, selectedPlaylist.tracks)}
+                onFavorite={() => onFavorite(track)}
+                onAddToQueue={() => onAddAllToQueue([track])}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {recent.length > 0 && (
+        <section className="content-section">
+          <div className="section-heading">
+            <div>
+              <h2>最近播放</h2>
+              <p>最近播放的歌曲会保留在这里</p>
+            </div>
+          </div>
+          <div className="track-table">
+            <TrackTableHeader />
+            {recent.map((track, index) => (
+              <TrackRow
+                key={`${track.key}:${index}`}
+                track={track}
+                index={index}
+                favorite={favoriteKeys.has(track.key)}
+                onPlay={() => onPlay(track, recent)}
                 onFavorite={() => onFavorite(track)}
                 onAddToQueue={() => onAddAllToQueue([track])}
               />
@@ -214,6 +202,7 @@ export function LibraryView({
         </div>
         {favorites.length ? (
           <div className="track-table">
+            <TrackTableHeader />
             {favorites.map((track, index) => (
               <TrackRow
                 key={track.key}

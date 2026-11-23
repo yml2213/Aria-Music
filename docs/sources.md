@@ -9,16 +9,18 @@
 
 ## 音源执行
 
-每个音源由独立 Node Worker 加载：
+每个音源由独立 Node 子进程加载：
 
 - 初始化超时 8 秒。
 - 单次取链超时 20 秒。
-- Worker 不暴露 `process`、`require`、文件系统或子进程能力。
+- 子进程使用 Node Permission Model，只允许读取音源宿主脚本和访问网络。
+- 文件写入、子进程、Worker 线程、原生插件和 WASI 默认禁止。
+- 子进程不继承服务端环境变量，敏感配置不会直接进入音源脚本。
 - 只提供 `lx.on`、`lx.send`、`lx.request` 和必需的 `lx.utils`。
 - 音源返回地址必须是 HTTP(S) URL。
-- 音源异常或超时后会终止对应 Worker。
+- 音源异常、超时或运行超过 5 分钟后会终止对应子进程。
 
-Worker 隔离降低了音源脚本对主进程和前端页面的影响，但 JavaScript 运行时隔离不是完整安全沙箱。只应导入可信来源。
+子进程和权限模型降低了脚本对主服务的影响，但自定义脚本仍属于可执行代码，不是强安全沙箱。生产环境应组合使用域名白名单、Basic Auth、容器权限限制和可信来源策略。
 
 ## 主备切换
 
@@ -41,8 +43,9 @@ Worker 隔离降低了音源脚本对主进程和前端页面的影响，但 Jav
 - `GET /api/search?provider=netease&q=晴天`
 - `POST /api/track/resolve`
 - `POST /api/track/lyric`
+- `GET /api/media/:token`（可选同源媒体代理）
 - `GET /api/playlists/netease/:id`
 
 ## 数据
 
-音源脚本保存在 `data/sources.json`，可设置 `MUSIC_DATA_DIR` 修改数据目录。
+音源脚本保存在 `data/sources.json`，可设置 `MUSIC_DATA_DIR` 修改数据目录。文件以 `0600` 权限写入，损坏的配置会被重命名为 `.corrupt-<时间戳>` 后启动空配置。

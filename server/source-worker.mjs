@@ -1,4 +1,3 @@
-import { parentPort, workerData } from "node:worker_threads";
 import vm from "node:vm";
 import {
   constants,
@@ -9,7 +8,9 @@ import {
 } from "node:crypto";
 import zlib from "node:zlib";
 
-const { script, info } = workerData;
+let script = "";
+let info = {};
+let sourceStarted = false;
 const EVENT_NAMES = Object.freeze({
   request: "request",
   inited: "inited",
@@ -21,7 +22,7 @@ let requestHandler = null;
 let initialized = false;
 
 function post(message) {
-  parentPort?.postMessage(message);
+  if (process.connected) process.send?.(message);
 }
 
 function sanitizeSources(value) {
@@ -122,12 +123,24 @@ const lx = {
   version: "2.0.0",
   env: "desktop",
   currentScriptInfo: {
-    name: info.name,
-    description: info.description,
-    version: info.version,
-    author: info.author,
-    homepage: info.homepage,
-    rawScript: script,
+    get name() {
+      return info.name;
+    },
+    get description() {
+      return info.description;
+    },
+    get version() {
+      return info.version;
+    },
+    get author() {
+      return info.author;
+    },
+    get homepage() {
+      return info.homepage;
+    },
+    get rawScript() {
+      return script;
+    },
   },
   request: lxRequest,
   on(eventName, handler) {
@@ -214,37 +227,74 @@ const lx = {
   },
 };
 
-const sandbox = {
-  lx,
-  console: Object.freeze({
-    log() {},
-    warn() {},
-    error() {},
-    info() {},
-    debug() {},
-  }),
-  setTimeout,
-  clearTimeout,
-  setInterval,
-  clearInterval,
-  queueMicrotask,
-  URL,
-  URLSearchParams,
-  TextEncoder,
-  TextDecoder,
-  atob,
-  btoa,
-  AbortController,
-};
-const context = vm.createContext(sandbox, {
-  name: `lx-source:${info.name}`,
-  codeGeneration: { strings: true, wasm: false },
-});
-context.window = context;
-context.self = context;
+function startSource() {
+  sourceStarted = true;
+  const sandbox = {
+    lx,
+    console: Object.freeze({
+      log() {},
+      warn() {},
+      error() {},
+      info() {},
+      debug() {},
+    }),
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    queueMicrotask,
+    URL,
+    URLSearchParams,
+    TextEncoder,
+    TextDecoder,
+    atob,
+    btoa,
+    AbortController,
+  };
+  const context = vm.createContext(sandbox, {
+    name: `lx-source:${info.name || "unknown"}`,
+    codeGeneration: { strings: true, wasm: false },
+  });
+  context.window = context;
+  context.self = context;
 
-parentPort?.on("message", async (message) => {
-  if (message?.type === "request") {
+  try {
+    vm.runInContext(script, context, {
+      filename: `${info.name || "lx-source"}.js`,
+      timeout: 8_000,
+    });
+  } catch (error) {
+    post({
+      type: "init",
+      ok: false,
+      message: (error instanceof Error ? error.message : String(error)).slice(0, 1024),
+    });
+  }
+}
+
+process.on("message", async (message) => {
+  if (message?.type === "init" && !sourceStarted) {
+    if (
+      typeof message.script !== "string" ||
+      !message.info ||
+      typeof message.info !== "object"
+    ) {
+      post({ type: "init", ok: false, message: "音源初始化数据无效" });
+      return;
+    }
+    script = message.script;
+    info = message.info;
+    startSource();
+  } else if (message?.type === "request") {
+    if (!sourceStarted) {
+      post({
+        type: "response",
+        requestId: message.requestId,
+        ok: false,
+        message: "音源尚未初始化",
+      });
+      return;
+    }
     const requestId = message.requestId;
     if (!requestHandler) {
       post({
@@ -274,15 +324,4 @@ parentPort?.on("message", async (message) => {
   }
 });
 
-try {
-  vm.runInContext(script, context, {
-    filename: `${info.name || "lx-source"}.js`,
-    timeout: 8_000,
-  });
-} catch (error) {
-  post({
-    type: "init",
-    ok: false,
-    message: (error instanceof Error ? error.message : String(error)).slice(0, 1024),
-  });
-}
+process.on("disconnect", () => process.exit(0));

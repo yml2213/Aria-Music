@@ -14,6 +14,8 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
+import { useRef } from "react";
+import { useDialogFocus } from "../lib/use-dialog-focus";
 import type { RepeatMode, Track } from "../types";
 import { providerInfo } from "../types";
 import { Artwork } from "./Artwork";
@@ -45,7 +47,7 @@ interface PlayerBarProps {
   onOpenNowPlaying: () => void;
 }
 
-export function formatTime(seconds: number) {
+function formatTime(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
   const minutes = Math.floor(seconds / 60);
   const rest = Math.floor(seconds % 60);
@@ -300,11 +302,24 @@ export function NowPlayingSheet({
   onOpenQueue,
 }: NowPlayingSheetProps) {
   const progress = duration ? (currentTime / duration) * 100 : 0;
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(open, onClose, dialogRef);
 
   return (
-    <div className={`now-playing-sheet ${open ? "open" : ""}`} aria-hidden={!open}>
+    <div
+      className={`now-playing-sheet ${open ? "open" : ""}`}
+      aria-hidden={!open}
+      inert={!open}
+    >
       <div className="sheet-backdrop" onClick={onClose} />
-      <div className="sheet-panel" role="dialog" aria-modal="true" aria-label="正在播放">
+      <div
+        ref={dialogRef}
+        className="sheet-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="正在播放"
+        tabIndex={-1}
+      >
         <div className="sheet-handle" />
         <button
           className="icon-button sheet-close"
@@ -357,13 +372,31 @@ export function NowPlayingSheet({
               </div>
             </div>
             <div className="sheet-controls">
-              <button className="icon-button" type="button" onClick={onPrevious}>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="上一首"
+                title="上一首"
+                onClick={onPrevious}
+              >
                 <SkipBack fill="currentColor" />
               </button>
-              <button className="play-button large" type="button" onClick={onTogglePlay}>
+              <button
+                className="play-button large"
+                type="button"
+                aria-label={playing ? "暂停" : "播放"}
+                title={playing ? "暂停" : "播放"}
+                onClick={onTogglePlay}
+              >
                 {playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
               </button>
-              <button className="icon-button" type="button" onClick={onNext}>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="下一首"
+                title="下一首"
+                onClick={onNext}
+              >
                 <SkipForward fill="currentColor" />
               </button>
             </div>

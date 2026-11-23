@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import type {
@@ -65,14 +72,72 @@ function sourceInfo(source: StoredSource): SourceInfo {
   return structuredClone(info);
 }
 
+function normalizeStatus(value: unknown): SourceStatus {
+  const status =
+    typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>)
+      : {};
+  const state =
+    status.state === "ready" || status.state === "error" ? status.state : "idle";
+  return {
+    state,
+    message: typeof status.message === "string" ? status.message.slice(0, 1024) : undefined,
+    checkedAt: Number.isFinite(Number(status.checkedAt))
+      ? Number(status.checkedAt)
+      : undefined,
+  };
+}
+
+function normalizeSource(value: unknown): StoredSource | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const source = value as Record<string, unknown>;
+  if (
+    typeof source.id !== "string" ||
+    typeof source.scriptGzip !== "string" ||
+    typeof source.scriptHash !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    id: source.id,
+    name: typeof source.name === "string" ? source.name : "未命名音源",
+    description: typeof source.description === "string" ? source.description : "",
+    version: typeof source.version === "string" ? source.version : "",
+    author: typeof source.author === "string" ? source.author : "",
+    homepage: typeof source.homepage === "string" ? source.homepage : "",
+    sourceUrl: typeof source.sourceUrl === "string" ? source.sourceUrl : undefined,
+    importedAt: Number.isFinite(Number(source.importedAt))
+      ? Number(source.importedAt)
+      : Date.now(),
+    scriptHash: source.scriptHash,
+    scriptGzip: source.scriptGzip,
+    capabilities:
+      typeof source.capabilities === "object" && source.capabilities !== null
+        ? (source.capabilities as StoredSource["capabilities"])
+        : {},
+    status: normalizeStatus(source.status),
+  };
+}
+
 export class SourceStore {
   private readonly file: string;
   private data: StoredData;
 
   constructor(dataDir = process.env.MUSIC_DATA_DIR || path.join(process.cwd(), "data")) {
-    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     this.file = path.join(dataDir, "sources.json");
     this.data = this.read();
+  }
+
+  private preserveCorruptFile() {
+    if (!existsSync(this.file)) return;
+    const backup = `${this.file}.corrupt-${Date.now()}`;
+    try {
+      renameSync(this.file, backup);
+      chmodSync(backup, 0o600);
+    } catch {
+      // A read-only data directory should not prevent the app from starting.
+    }
   }
 
   private read(): StoredData {
@@ -81,7 +146,10 @@ export class SourceStore {
     }
     try {
       const parsed = JSON.parse(readFileSync(this.file, "utf8")) as Partial<StoredData>;
-      const sources = Array.isArray(parsed.sources) ? parsed.sources : [];
+      const rawSources = Array.isArray(parsed.sources) ? parsed.sources : [];
+      const sources = rawSources
+        .map(normalizeSource)
+        .filter((source): source is StoredSource => Boolean(source));
       const ids = new Set(sources.map((source) => source.id));
       const primaryId = ids.has(parsed.primaryId ?? "") ? parsed.primaryId! : sources[0]?.id ?? "";
       const backupIds = (Array.isArray(parsed.backupIds) ? parsed.backupIds : []).filter(
@@ -89,14 +157,19 @@ export class SourceStore {
       );
       return { version: 1, sources, primaryId, backupIds };
     } catch {
+      this.preserveCorruptFile();
       return { version: 1, sources: [], primaryId: "", backupIds: [] };
     }
   }
 
   private save() {
     const temp = `${this.file}.tmp`;
-    writeFileSync(temp, JSON.stringify(this.data, null, 2), "utf8");
+    writeFileSync(temp, JSON.stringify(this.data, null, 2), {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     renameSync(temp, this.file);
+    chmodSync(this.file, 0o600);
   }
 
   list(): SourceInfo[] {

@@ -22,6 +22,7 @@ interface SidePanelProps {
   currentTrack?: Track;
   currentTime: number;
   resolving: boolean;
+  lyricLoading: boolean;
   onTabChange: (tab: SidePanelTab) => void;
   onClose: () => void;
   onPlayTrack: (track: Track) => void;
@@ -49,10 +50,12 @@ function Lyrics({
   track,
   currentTime,
   resolving,
+  lyricLoading,
 }: {
   track?: Track;
   currentTime: number;
   resolving: boolean;
+  lyricLoading: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const lines = useMemo(
@@ -76,7 +79,7 @@ function Lyrics({
     );
   }
 
-  if (resolving) {
+  if (resolving || lyricLoading) {
     return (
       <div className="lyrics-loading">
         <LoaderCircle className="spin" />
@@ -121,6 +124,7 @@ export function SidePanel({
   currentTrack,
   currentTime,
   resolving,
+  lyricLoading,
   onTabChange,
   onClose,
   onPlayTrack,
@@ -128,7 +132,12 @@ export function SidePanel({
   onClearQueue,
 }: SidePanelProps) {
   return (
-    <aside className={`side-panel ${open ? "open" : ""}`} aria-label="播放详情">
+    <aside
+      className={`side-panel ${open ? "open" : ""}`}
+      aria-label="播放详情"
+      aria-hidden={!open}
+      inert={!open}
+    >
       <div className="side-panel-header">
         <div className="side-panel-tabs" role="tablist">
           <button
@@ -226,7 +235,12 @@ export function SidePanel({
           )}
         </div>
       ) : (
-        <Lyrics track={currentTrack} currentTime={currentTime} resolving={resolving} />
+        <Lyrics
+          track={currentTrack}
+          currentTime={currentTime}
+          resolving={resolving}
+          lyricLoading={lyricLoading}
+        />
       )}
     </aside>
   );

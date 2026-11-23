@@ -1,4 +1,5 @@
 const DEFAULT_TIMEOUT_MS = 15_000;
+const DEFAULT_MAX_BYTES = 6_000_000;
 
 export class HttpError extends Error {
   statusCode: number;
@@ -22,9 +23,12 @@ export async function requestText(
   url: string,
   options: RequestInit = {},
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  maxBytes = DEFAULT_MAX_BYTES,
 ): Promise<ResponseData> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const debug = process.env.DEBUG_HTTP === "1";
+  if (debug) console.error(`[http] start ${url} timeout=${timeoutMs} max=${maxBytes}`);
   try {
     const response = await fetch(url, {
       ...options,
@@ -35,7 +39,28 @@ export async function requestText(
         ...options.headers,
       },
     });
-    const raw = new Uint8Array(await response.arrayBuffer());
+    if (debug) console.error(`[http] headers ${response.status} ${url}`);
+    const contentLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      throw new HttpError("上游响应过大", 502);
+    }
+    const reader = response.body?.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new HttpError("上游响应过大", 502);
+        }
+        chunks.push(value);
+      }
+    }
+    const raw = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+    if (debug) console.error(`[http] body ${raw.length} bytes ${url}`);
     const text = new TextDecoder().decode(raw);
     let body: unknown = text;
     try {
@@ -51,6 +76,8 @@ export async function requestText(
       body,
     };
   } catch (error) {
+    if (debug) console.error(`[http] failed ${url}`, error);
+    if (error instanceof HttpError) throw error;
     if (error instanceof Error && error.name === "AbortError") {
       throw new HttpError("请求超时", 408);
     }

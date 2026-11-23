@@ -1,6 +1,6 @@
 export type Provider = "netease" | "qq" | "kugou" | "kuwo";
 
-export type ViewName = "home" | "search" | "library";
+export type ViewName = "home" | "search" | "import" | "library";
 
 export type Quality = "standard" | "lossless" | "hires" | "jymaster";
 
@@ -43,6 +43,7 @@ export interface Track {
   sourceIndex?: number;
   quality?: string;
   url?: string;
+  remoteUrl?: string;
   lyric?: string;
   translatedLyric?: string;
   platformMeta: TrackPlatformMeta;

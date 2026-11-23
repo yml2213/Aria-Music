@@ -1,0 +1,98 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { SourceManager } from "../../server/source-manager";
+import { SourceStore } from "../../server/source-store";
+import type { Track } from "../../server/types";
+
+function sourceScript(name: string, requestBody: string) {
+  return `/*
+ * @name ${name}
+ * @description test source
+ * @version 1.0.0
+ * @author test
+ * @homepage https://example.com
+ */
+lx.on(lx.EVENT_NAMES.request, async () => {
+${requestBody}
+});
+lx.send(lx.EVENT_NAMES.inited, {
+  status: true,
+  sources: {
+    wy: {
+      name: "netease",
+      type: "music",
+      actions: ["musicUrl"],
+      qualitys: ["128k", "flac"]
+    }
+  }
+});
+`;
+}
+
+function track(): Track {
+  return {
+    key: "netease:test",
+    provider: "netease",
+    id: "test",
+    title: "test",
+    artist: "artist",
+    album: "album",
+    duration: 180,
+    platformMeta: {
+      lxSource: "wy",
+      songmid: "test",
+      qualitys: [{ type: "128k", size: "1 MB" }],
+    },
+  };
+}
+
+test("source processes resolve music URLs through the restricted child process", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "aria-source-test-"));
+  const store = new SourceStore(directory);
+  const manager = new SourceManager(store);
+  try {
+    store.import(
+      sourceScript(
+        "working source",
+        '  return "https://media.example.com/audio.mp3";',
+      ),
+    );
+    const resolved = await manager.resolve(track(), "standard");
+    assert.equal(resolved.url, "https://media.example.com/audio.mp3");
+    assert.equal(resolved.quality, "128k");
+  } finally {
+    await manager.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("source scripts cannot read host files even after escaping the VM context", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "aria-source-test-"));
+  const store = new SourceStore(directory);
+  const manager = new SourceManager(store);
+  try {
+    store.import(
+      sourceScript(
+        "sandbox probe",
+        `  try {
+    const hostProcess = lx.request.constructor("return process")();
+    const fs = hostProcess.getBuiltinModule("node:fs/promises");
+    await fs.readFile("/etc/hosts", "utf8");
+    return "https://media.example.com/leaked.mp3";
+  } catch (error) {
+    throw new Error("sandbox:" + (error.code || error.message));
+  }`,
+      ),
+    );
+    await assert.rejects(
+      () => manager.resolve(track(), "standard"),
+      /sandbox:ERR_ACCESS_DENIED/,
+    );
+  } finally {
+    await manager.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

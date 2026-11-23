@@ -3,6 +3,7 @@ import type { SearchState, Track } from "../types";
 import { PROVIDERS } from "../types";
 import { EmptyState } from "./EmptyState";
 import { TrackRow } from "./TrackRow";
+import { TrackTableHeader } from "./TrackTableHeader";
 
 interface SearchViewProps {
   search: SearchState;
@@ -107,6 +108,7 @@ export function SearchView({
             </button>
           </div>
           <div className="track-table">
+            <TrackTableHeader />
             {search.results.map((track, index) => (
               <TrackRow
                 key={track.key}

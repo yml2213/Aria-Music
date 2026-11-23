@@ -204,9 +204,10 @@ test("search, playback, lyrics, and playlist import", async ({ page }) => {
   await page.getByRole("tab", { name: "歌词" }).click();
   await expect(page.getByText("故事的小黄花")).toBeVisible();
 
-  await page.getByRole("button", { name: "我的音乐" }).click();
-  await page.getByLabel("网易云歌单 ID").fill("5202687076");
-  await page.getByRole("button", { name: "导入", exact: true }).click();
+  await page.locator(".sidebar-nav").getByRole("button", { name: "导入歌单" }).click();
+  await expect(page.getByRole("heading", { name: "导入歌单" })).toBeVisible();
+  await page.getByLabel("网易云歌单 ID 或链接").fill("5202687076");
+  await page.getByRole("button", { name: "开始导入", exact: true }).click();
   await expect(page.getByRole("heading", { name: "华语经典" })).toBeVisible();
 });
 

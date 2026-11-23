@@ -3,11 +3,16 @@ import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  HttpError,
-  requestText,
-} from "./http";
+import { HttpError } from "./http";
+import { MediaProxy } from "./media-proxy";
+import { requestPublicText } from "./remote";
 import { getLyric, importNeteasePlaylist, searchTracks } from "./search";
+import {
+  applySecurityHeaders,
+  authConfigFromEnv,
+  isAuthorized,
+  requestIsSameOrigin,
+} from "./security";
 import { SourceManager } from "./source-manager";
 import { SourceStore } from "./source-store";
 import type { Provider, Quality, Track } from "./types";
@@ -18,6 +23,15 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = path.join(ROOT, "dist");
 const store = new SourceStore();
 const sources = new SourceManager(store);
+const mediaProxy = new MediaProxy();
+const mediaProxyEnabled = process.env.MEDIA_PROXY === "1";
+let auth: ReturnType<typeof authConfigFromEnv>;
+try {
+  auth = authConfigFromEnv();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}
 
 const providerIds = new Set<Provider>(["netease", "qq", "kugou", "kuwo"]);
 const qualityIds = new Set<Quality>(["standard", "lossless", "hires", "jymaster"]);
@@ -70,7 +84,7 @@ async function readJson(request: IncomingMessage) {
   for await (const chunk of request) {
     const buffer = Buffer.from(chunk);
     size += buffer.length;
-    if (size > 10_000_000) throw new HttpError("请求体过大", 413);
+    if (size > 1_000_000) throw new HttpError("请求体过大", 413);
     chunks.push(buffer);
   }
   if (!chunks.length) return {};
@@ -82,11 +96,15 @@ async function readJson(request: IncomingMessage) {
 }
 
 async function importSource(url: string) {
-  const response = await requestText(
+  const debug = process.env.DEBUG_HTTP === "1";
+  if (debug) console.error(`[source] downloading ${url}`);
+  const response = await requestPublicText(
     url,
-    { redirect: "follow" },
+    {},
     20_000,
+    9_100_000,
   );
+  if (debug) console.error(`[source] downloaded status=${response.statusCode}`);
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw new HttpError(`音源下载失败：HTTP ${response.statusCode}`, response.statusCode);
   }
@@ -94,15 +112,13 @@ async function importSource(url: string) {
     throw new HttpError("音源地址没有返回 JavaScript 文本");
   }
   const info = store.import(response.body, url);
+  if (debug) console.error(`[source] stored ${info.id}`);
   await sources.testSource(info.id).catch(() => undefined);
+  if (debug) console.error(`[source] initialized ${info.id}`);
   return store.config();
 }
 
 async function handleApi(request: IncomingMessage, response: ServerResponse, url: URL) {
-  if (request.method === "GET" && url.pathname === "/api/health") {
-    json(response, 200, { ok: true });
-    return true;
-  }
   if (request.method === "GET" && url.pathname === "/api/config") {
     json(response, 200, store.config());
     return true;
@@ -114,7 +130,10 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
   if (request.method === "POST" && url.pathname === "/api/sources/import") {
     const body = await readJson(request);
     const sourceUrl = typeof body.url === "string" ? body.url.trim() : "";
-    if (!/^https?:\/\/[^\s]+$/i.test(sourceUrl)) {
+    if (
+      sourceUrl.length > 2048 ||
+      !/^https?:\/\/[^\s]+$/i.test(sourceUrl)
+    ) {
       throw new HttpError("请输入有效的 HTTP(S) 音源地址", 400);
     }
     json(response, 200, await importSource(sourceUrl));
@@ -138,7 +157,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     const backupIds = Array.isArray(body.backupIds)
       ? body.backupIds.filter((id): id is string => typeof id === "string")
       : [];
-    json(response, 200, store.setSelection(primaryId, backupIds));
+    json(response, 200, store.setSelection(primaryId, backupIds.slice(0, 20)));
     return true;
   }
   if (request.method === "GET" && url.pathname === "/api/search") {
@@ -151,6 +170,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
       json(response, 200, { tracks: [] });
       return true;
     }
+    if (query.length > 200) throw new HttpError("搜索关键词过长", 400);
     json(response, 200, { tracks: await searchTracks(provider, query, 30) });
     return true;
   }
@@ -167,7 +187,16 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     if (!quality || !qualityIds.has(quality)) {
       throw new HttpError("不支持的音质", 400);
     }
-    json(response, 200, await sources.resolve(track, quality, excludedUrls));
+    const resolved = await sources.resolve(
+      track,
+      quality,
+      excludedUrls.slice(0, 200),
+    );
+    json(response, 200, {
+      ...resolved,
+      remoteUrl: resolved.url,
+      url: mediaProxyEnabled ? mediaProxy.create(resolved.url) : resolved.url,
+    });
     return true;
   }
   if (request.method === "POST" && url.pathname === "/api/track/lyric") {
@@ -179,10 +208,14 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
   }
   const playlistMatch = /^\/api\/playlists\/netease\/([^/]+)$/.exec(url.pathname);
   if (request.method === "GET" && playlistMatch) {
+    const playlistId = decodeURIComponent(playlistMatch[1]);
+    if (!/^\d{1,24}$/.test(playlistId)) {
+      throw new HttpError("网易云歌单 ID 无效", 400);
+    }
     json(
       response,
       200,
-      await importNeteasePlaylist(decodeURIComponent(playlistMatch[1])),
+      await importNeteasePlaylist(playlistId),
     );
     return true;
   }
@@ -214,7 +247,14 @@ async function serveStatic(response: ServerResponse, pathname: string) {
     response.end("Forbidden");
     return;
   }
-  if (!existsSync(filePath)) filePath = path.join(DIST, "index.html");
+  if (!existsSync(filePath)) {
+    if (path.extname(requested)) {
+      response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("Not Found");
+      return;
+    }
+    filePath = path.join(DIST, "index.html");
+  }
   if (!existsSync(filePath)) {
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     response.end("前端尚未构建，请运行 npm run build 或使用 npm run dev。");
@@ -224,33 +264,97 @@ async function serveStatic(response: ServerResponse, pathname: string) {
   response.writeHead(200, {
     "Content-Type": mimeTypes[path.extname(filePath).toLowerCase()] ?? "application/octet-stream",
     "Content-Length": info.size,
+    "Cache-Control":
+      pathname.startsWith("/assets/") && /\.[a-f0-9]{8,}\./i.test(pathname)
+        ? "public, max-age=31536000, immutable"
+        : "no-cache",
   });
-  createReadStream(filePath).pipe(response);
+  const stream = createReadStream(filePath);
+  stream.on("error", () => response.destroy());
+  stream.pipe(response);
 }
 
 const server = createServer(async (request, response) => {
+  applySecurityHeaders(response);
   try {
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+    if (request.method === "GET" && url.pathname === "/api/health") {
+      json(response, 200, { ok: true, uptime: Math.round(process.uptime()) });
+      return;
+    }
+    if (!isAuthorized(request, auth)) {
+      response.setHeader("WWW-Authenticate", 'Basic realm="Aria Music", charset="UTF-8"');
+      if (url.pathname.startsWith("/api/")) {
+        json(response, 401, { message: "需要登录后才能访问" });
+      } else {
+        response.writeHead(401, { "Content-Type": "text/plain; charset=utf-8" });
+        response.end("需要登录后才能访问 Aria Music");
+      }
+      return;
+    }
+    if (!requestIsSameOrigin(request)) {
+      json(response, 403, { message: "拒绝跨站请求" });
+      return;
+    }
+    const mediaMatch = /^\/api\/media\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
+    if (
+      mediaMatch &&
+      (request.method === "GET" || request.method === "HEAD")
+    ) {
+      await mediaProxy.handle(request, response, mediaMatch[1]);
+      return;
+    }
     if (await handleApi(request, response, url)) return;
     await serveStatic(response, decodeURIComponent(url.pathname));
   } catch (error) {
     const status = error instanceof HttpError && error.statusCode ? error.statusCode : 500;
     const message = error instanceof Error ? error.message : "服务器内部错误";
-    json(response, status, { message });
+    if (status >= 500) {
+      console.error(`${request.method} ${request.url} -> ${status}`, error);
+    }
+    if (response.headersSent) {
+      response.destroy();
+    } else {
+      json(response, status, { message });
+    }
   }
 });
 
+server.on("error", (error) => {
+  console.error("Aria Music server error", error);
+});
+
 server.listen(PORT, HOST, () => {
-  console.log(`Aria Music server: http://${HOST}:${PORT}`);
+  console.log(
+    `Aria Music server: http://${HOST}:${PORT} (auth: ${auth.enabled ? "on" : "off"})`,
+  );
   const primaryId = store.config().primaryId;
   if (primaryId) void sources.testSource(primaryId).catch(() => undefined);
 });
 
-async function shutdown() {
-  server.close();
+let shuttingDown = false;
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}, shutting down`);
+  const forceExit = setTimeout(() => {
+    server.closeAllConnections();
+    process.exit(1);
+  }, 10_000);
+  forceExit.unref();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
   await sources.close();
+  clearTimeout(forceExit);
   process.exit(0);
 }
 
-process.on("SIGINT", () => void shutdown());
-process.on("SIGTERM", () => void shutdown());
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception", error);
+  void shutdown("uncaughtException");
+});
+process.on("unhandledRejection", (error) => {
+  console.error("Unhandled rejection", error);
+  void shutdown("unhandledRejection");
+});

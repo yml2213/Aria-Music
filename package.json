@@ -3,15 +3,21 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "concurrently -k -n web,server -c cyan,magenta \"npm:dev:web\" \"npm:dev:server\"",
     "dev:web": "vite",
     "dev:server": "tsx watch server/index.ts",
-    "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
+    "build": "npm run lint && npm run build:server && vite build",
+    "build:server": "node -e \"require('node:fs').rmSync('dist-server',{recursive:true,force:true})\" && esbuild server/index.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist-server/index.js && node -e \"require('node:fs').copyFileSync('server/source-worker.mjs','dist-server/source-worker.mjs')\"",
     "lint": "tsc -b --pretty false && tsc -p tsconfig.server.json --pretty false",
     "preview": "vite preview",
-    "start": "tsx server/index.ts",
+    "start": "node dist-server/index.js",
     "server": "tsx server/index.ts",
+    "test": "npm run lint && npm run test:server",
+    "test:server": "tsx --test tests/server/*.test.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -26,6 +32,7 @@
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^6.3.0",
     "concurrently": "^9.2.1",
+    "esbuild": "^0.28.2",
     "tsx": "^4.20.6",
     "typescript": "^7.0.2",
     "vite": "^8.0.0"

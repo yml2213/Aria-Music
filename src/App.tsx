@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, LoaderCircle } from "lucide-react";
 import { HomeView } from "./components/HomeView";
+import { ImportView } from "./components/ImportView";
 import { LibraryView } from "./components/LibraryView";
 import { NowPlayingSheet, PlayerBar } from "./components/PlayerBar";
 import { SearchView } from "./components/SearchView";
@@ -21,9 +22,10 @@ import {
   sourceStatus as getSourceStatus,
   testSource as testMusicSource,
 } from "./lib/api";
-import { storage } from "./lib/storage";
+import { storage, STORAGE_ERROR_EVENT } from "./lib/storage";
+import { useLibrary } from "./hooks/use-library";
+import { useMediaSession } from "./hooks/use-media-session";
 import type {
-  Playlist,
   Quality,
   RepeatMode,
   SearchState,
@@ -71,18 +73,16 @@ function App() {
     loading: false,
     error: "",
   });
-  const [favorites, setFavorites] = useState<Track[]>(() => storage.getFavorites());
-  const [recent, setRecent] = useState<Track[]>(() => storage.getRecent());
-  const [playlists, setPlaylists] = useState<Playlist[]>(() => storage.getPlaylists());
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>();
 
   const [queue, setQueue] = useState<Track[]>([]);
   const [currentTrack, setCurrentTrack] = useState<Track>();
   const [playing, setPlaying] = useState(false);
   const [resolving, setResolving] = useState(false);
+  const [lyricLoading, setLyricLoading] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(0.82);
+  const [volume, setVolume] = useState(() => storage.getVolume());
   const [muted, setMuted] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
   const [shuffle, setShuffle] = useState(false);
@@ -92,16 +92,6 @@ function App() {
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>("queue");
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
   const [toast, setToast] = useState<Toast>();
-
-  const selectedPlaylist = useMemo(
-    () => playlists.find((playlist) => playlist.id === selectedPlaylistId),
-    [playlists, selectedPlaylistId],
-  );
-
-  const favoriteKeys = useMemo(
-    () => new Set(favorites.map((track) => track.key)),
-    [favorites],
-  );
 
   const sourceConfigured = hasConfiguredSource(sourceConfig);
   const playbackSourceStatus = getSourceStatus(sourceConfig);
@@ -118,12 +108,41 @@ function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(undefined), 3600);
   }, []);
 
+  const {
+    favorites,
+    recent,
+    playlists,
+    ready: libraryReady,
+    addRecent,
+    toggleFavorite,
+    upsertPlaylist,
+  } = useLibrary(showToast);
+
+  const selectedPlaylist = useMemo(
+    () => playlists.find((playlist) => playlist.id === selectedPlaylistId),
+    [playlists, selectedPlaylistId],
+  );
+
+  const favoriteKeys = useMemo(
+    () => new Set(favorites.map((track) => track.key)),
+    [favorites],
+  );
+
   useEffect(
     () => () => {
       window.clearTimeout(toastTimerRef.current);
     },
     [],
   );
+
+  useEffect(() => {
+    const reportStorageError = (event: Event) => {
+      const message = (event as CustomEvent<string>).detail;
+      showToast(message || "浏览器本地存储不可用");
+    };
+    window.addEventListener(STORAGE_ERROR_EVENT, reportStorageError);
+    return () => window.removeEventListener(STORAGE_ERROR_EVENT, reportStorageError);
+  }, [showToast]);
 
   const refreshSourceConfig = useCallback(async () => {
     try {
@@ -234,12 +253,8 @@ function App() {
   );
 
   const markRecent = useCallback((track: Track) => {
-    setRecent((previous) => {
-      const next = [track, ...previous.filter((item) => item.key !== track.key)].slice(0, 24);
-      storage.setRecent(next);
-      return next;
-    });
-  }, []);
+    addRecent(track);
+  }, [addRecent]);
 
   const applyResolvedPlayback = useCallback(
     async (
@@ -253,12 +268,14 @@ function App() {
         ...originalTrack,
         ...resolved.track,
         url: resolved.url,
+        remoteUrl: resolved.remoteUrl,
         quality: resolved.quality,
       };
       setCurrentTrack(playableTrack);
       setCurrentTime(0);
       setDuration(playableTrack.duration ?? 0);
       setResolving(false);
+      setLyricLoading(true);
       if (remember) markRecent(playableTrack);
 
       const audio = audioRef.current;
@@ -279,7 +296,10 @@ function App() {
               : current,
           );
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          if (requestId === playRequestRef.current) setLyricLoading(false);
+        });
       return true;
     },
     [markRecent, showToast],
@@ -313,6 +333,7 @@ function App() {
       } catch (error) {
         if (requestId !== playRequestRef.current) return;
         setResolving(false);
+        setLyricLoading(false);
         setPlaying(false);
         showToast(errorMessage(error));
       }
@@ -386,21 +407,6 @@ function App() {
     }
   }, [currentTrack, playTrack, queue, showToast]);
 
-  const toggleFavorite = useCallback(
-    (track: Track) => {
-      setFavorites((previous) => {
-        const exists = previous.some((item) => item.key === track.key);
-        const next = exists
-          ? previous.filter((item) => item.key !== track.key)
-          : [track, ...previous];
-        storage.setFavorites(next);
-        showToast(exists ? "已取消收藏" : "已加入收藏");
-        return next;
-      });
-    },
-    [showToast],
-  );
-
   const addToQueue = useCallback(
     (tracks: Track[]) => {
       if (!tracks.length) return;
@@ -448,22 +454,16 @@ function App() {
     async (id: string) => {
       try {
         const playlist = await importNeteasePlaylist(id);
-        setPlaylists((previous) => {
-          const next = [
-            playlist,
-            ...previous.filter((item) => item.id !== playlist.id),
-          ];
-          storage.setPlaylists(next);
-          return next;
-        });
+        upsertPlaylist(playlist);
         setSelectedPlaylistId(playlist.id);
         showToast(`已导入“${playlist.title}”`);
+        return playlist;
       } catch (error) {
         showToast(errorMessage(error));
         throw error;
       }
     },
-    [showToast],
+    [showToast, upsertPlaylist],
   );
 
   const importSourceAndSync = useCallback(
@@ -514,16 +514,29 @@ function App() {
     if (tab === "lyrics") setNowPlayingOpen(false);
   };
 
-  const seek = (value: number) => {
+  const seek = useCallback((value: number) => {
     const audio = audioRef.current;
     if (!audio) return;
     audio.currentTime = value;
     setCurrentTime(value);
-  };
+  }, []);
+
+  const skipNext = useCallback(() => playNext(false), [playNext]);
+
+  useMediaSession({
+    track: currentTrack,
+    currentTime,
+    duration,
+    audioRef,
+    onCurrentTime: setCurrentTime,
+    onPrevious: playPrevious,
+    onNext: skipNext,
+  });
 
   const changeVolume = (value: number) => {
     const audio = audioRef.current;
     setVolume(value);
+    storage.setVolume(value);
     setMuted(value === 0);
     if (audio) {
       audio.volume = value;
@@ -552,8 +565,10 @@ function App() {
   const handleAudioError = () => {
     if (!currentTrack || resolving) return;
     const audio = audioRef.current;
-    if (currentTrack.url && !failedPlaybackUrlsRef.current.includes(currentTrack.url)) {
-      failedPlaybackUrlsRef.current.push(currentTrack.url);
+    for (const failedUrl of [currentTrack.url, currentTrack.remoteUrl]) {
+      if (failedUrl && !failedPlaybackUrlsRef.current.includes(failedUrl)) {
+        failedPlaybackUrlsRef.current.push(failedUrl);
+      }
     }
     const mediaCode = audio?.error?.code;
     const detail =
@@ -586,12 +601,24 @@ function App() {
       .catch((error) => {
         if (requestId !== playRequestRef.current) return;
         setResolving(false);
+        setLyricLoading(false);
         setPlaying(false);
         showToast(`${detail}，自动换源失败：${errorMessage(error)}`);
       });
   };
 
   const renderView = () => {
+    if (!libraryReady) {
+      return (
+        <div className="view">
+          <div className="search-loading">
+            <LoaderCircle className="spin" />
+            <span>正在读取本地音乐库</span>
+          </div>
+        </div>
+      );
+    }
+
     if (view === "home") {
       return (
         <HomeView
@@ -600,6 +627,7 @@ function App() {
           favorites={favorites}
           onOpenSettings={() => setSettingsOpen(true)}
           onNavigateSearch={navigateSearch}
+          onNavigateImport={() => navigate("import")}
           onNavigateLibrary={() => navigate("library")}
           onQuickSearch={(value) => void performSearch(value, "netease")}
           onPlay={(track, context) => void playTrack(track, context)}
@@ -621,6 +649,17 @@ function App() {
       );
     }
 
+    if (view === "import") {
+      return (
+        <ImportView
+          playlistCount={playlists.length}
+          onBack={() => navigate("library")}
+          onImportPlaylist={importPlaylist}
+          onImported={() => navigate("library")}
+        />
+      );
+    }
+
     return (
       <LibraryView
         playlists={playlists}
@@ -629,7 +668,7 @@ function App() {
         selectedPlaylist={selectedPlaylist}
         quality={quality}
         onSelectPlaylist={setSelectedPlaylistId}
-        onImportPlaylist={importPlaylist}
+        onOpenImport={() => navigate("import")}
         onPlay={(track, context) => void playTrack(track, context)}
         onFavorite={toggleFavorite}
         onAddAllToQueue={addToQueue}
@@ -675,6 +714,7 @@ function App() {
         currentTrack={currentTrack}
         currentTime={currentTime}
         resolving={resolving}
+        lyricLoading={lyricLoading}
         onTabChange={setSidePanelTab}
         onClose={() => setSidePanelOpen(false)}
         onPlayTrack={(track) => void playTrack(track)}
@@ -697,7 +737,7 @@ function App() {
         sidePanelTab={sidePanelTab}
         onTogglePlay={() => void togglePlay()}
         onPrevious={playPrevious}
-        onNext={() => playNext(false)}
+        onNext={skipNext}
         onSeek={seek}
         onVolume={changeVolume}
         onToggleMute={toggleMute}
@@ -723,7 +763,7 @@ function App() {
         onClose={() => setNowPlayingOpen(false)}
         onTogglePlay={() => void togglePlay()}
         onPrevious={playPrevious}
-        onNext={() => playNext(false)}
+        onNext={skipNext}
         onSeek={seek}
         onVolume={changeVolume}
         onToggleMute={toggleMute}
