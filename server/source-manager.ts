@@ -92,7 +92,12 @@ export class SourceManager {
   config() {
     const config = this.store.config();
     const enabledIds = this.configuredIds(config);
-    const routing = this.router.snapshot(enabledIds);
+    const unhealthyIds = new Set(
+      config.sources
+        .filter((source) => source.status.state === "error")
+        .map((source) => source.id),
+    );
+    const routing = this.router.snapshot(enabledIds, unhealthyIds);
     const metricsById = new Map(
       routing.metrics.map(({ sourceId, ...metrics }) => [sourceId, metrics]),
     );
@@ -461,7 +466,13 @@ export class SourceManager {
         this.router.recordMediaFailure(sourceId);
       }
     }
-    const routing = this.router.snapshot(configured);
+    const unhealthyIds = new Set(
+      this.store
+        .config()
+        .sources.filter((source) => source.status.state === "error")
+        .map((source) => source.id),
+    );
+    const routing = this.router.snapshot(configured, unhealthyIds);
     const excluded = new Set(excludedUrls);
     const excludedSources = new Set(excludedSourceIds);
     const ids = routing.effectiveIds.filter((id) => !excludedSources.has(id));

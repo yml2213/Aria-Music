@@ -63,3 +63,20 @@ test("media failures lower effective success and are persisted with routing logs
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("known unhealthy sources start behind healthy unknown sources", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "aria-routing-test-"));
+  const router = new SourceRouter(directory, { now: () => 3_000_000 });
+  try {
+    const snapshot = router.snapshot(
+      ["unhealthy", "healthy"],
+      ["unhealthy"],
+    );
+    assert.deepEqual(snapshot.effectiveIds, ["healthy", "unhealthy"]);
+    assert.equal(snapshot.metrics[0]?.rank, 1);
+    assert.equal(snapshot.metrics[1]?.rank, 2);
+    assert.ok((snapshot.metrics[1]?.score ?? 100) < 52);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

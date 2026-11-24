@@ -227,7 +227,11 @@ export class SourceRouter {
     );
   }
 
-  private metricsFor(sourceId: string, rank = 0): SourceMetrics {
+  private metricsFor(
+    sourceId: string,
+    rank = 0,
+    healthPenalty = 0,
+  ): SourceMetrics {
     const value = this.metrics.get(sourceId) ?? EMPTY_BUCKET;
     const usableSuccesses = Math.max(
       0,
@@ -235,7 +239,7 @@ export class SourceRouter {
     );
     return {
       rank,
-      score: this.score(value),
+      score: Math.max(0, this.score(value) - healthPenalty),
       attempts: Math.floor(value.attempts),
       successes: Math.floor(value.successes),
       failures: Math.floor(value.failures),
@@ -325,13 +329,14 @@ export class SourceRouter {
     this.save();
   }
 
-  snapshot(sourceIds: string[]) {
+  snapshot(sourceIds: string[], unhealthySourceIds: Iterable<string> = []) {
     const baseline = new Map(sourceIds.map((id, index) => [id, index]));
+    const unhealthy = new Set(unhealthySourceIds);
     const ordered = sourceIds
       .map((sourceId) => ({
         sourceId,
         baseline: baseline.get(sourceId) ?? Number.MAX_SAFE_INTEGER,
-        metrics: this.metricsFor(sourceId),
+        metrics: this.metricsFor(sourceId, 0, unhealthy.has(sourceId) ? 30 : 0),
       }))
       .sort(
         (left, right) =>
@@ -340,7 +345,11 @@ export class SourceRouter {
       );
     const metrics = ordered.map((item, index) => ({
       sourceId: item.sourceId,
-      ...this.metricsFor(item.sourceId, index + 1),
+      ...this.metricsFor(
+        item.sourceId,
+        index + 1,
+        unhealthy.has(item.sourceId) ? 30 : 0,
+      ),
     }));
     return {
       effectiveIds: ordered.map((item) => item.sourceId),
