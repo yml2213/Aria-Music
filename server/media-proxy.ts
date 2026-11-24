@@ -12,9 +12,24 @@ interface MediaEntry {
 const MEDIA_TTL_MS = 2 * 60 * 60_000;
 const MAX_MEDIA_ENTRIES = 500;
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+const HEADER_TIMEOUT_MS = 10_000;
+const STREAM_IDLE_TIMEOUT_MS = 30_000;
+
+interface MediaProxyOptions {
+  headerTimeoutMs?: number;
+  streamIdleTimeoutMs?: number;
+}
 
 export class MediaProxy {
   private readonly entries = new Map<string, MediaEntry>();
+  private readonly headerTimeoutMs: number;
+  private readonly streamIdleTimeoutMs: number;
+
+  constructor(options: MediaProxyOptions = {}) {
+    this.headerTimeoutMs = options.headerTimeoutMs ?? HEADER_TIMEOUT_MS;
+    this.streamIdleTimeoutMs =
+      options.streamIdleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS;
+  }
 
   private prune() {
     const now = Date.now();
@@ -51,7 +66,10 @@ export class MediaProxy {
     let current = await assertPublicMediaUrl(entry.url);
     for (let redirect = 0; redirect <= 5; redirect += 1) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 20_000);
+      const headerTimer = setTimeout(
+        () => controller.abort(),
+        this.headerTimeoutMs,
+      );
       let upstream: Response;
       try {
         upstream = await fetch(current, {
@@ -64,12 +82,15 @@ export class MediaProxy {
             ...(request.headers.range ? { Range: request.headers.range } : {}),
           },
         });
-      } catch {
+      } catch (error) {
+        if (process.env.DEBUG_HTTP === "1") {
+          console.error(`[media] ${current.hostname} connection failed`, error);
+        }
         response.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
         response.end("媒体源连接失败");
         return;
       } finally {
-        clearTimeout(timer);
+        clearTimeout(headerTimer);
       }
 
       if (REDIRECTS.has(upstream.status)) {
@@ -79,6 +100,11 @@ export class MediaProxy {
         continue;
       }
       if (![200, 206, 416].includes(upstream.status)) {
+        if (process.env.DEBUG_HTTP === "1") {
+          console.error(
+            `[media] ${current.hostname} returned HTTP ${upstream.status}`,
+          );
+        }
         response.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
         response.end(`媒体源返回 HTTP ${upstream.status}`);
         return;
@@ -101,8 +127,32 @@ export class MediaProxy {
       const stream = Readable.fromWeb(
         upstream.body as unknown as import("node:stream/web").ReadableStream,
       );
-      response.on("close", () => stream.destroy());
-      await pipeline(stream, response);
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      const clearIdleTimer = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = undefined;
+      };
+      const armIdleTimer = () => {
+        clearIdleTimer();
+        idleTimer = setTimeout(() => {
+          controller.abort();
+          stream.destroy(new Error("媒体流长时间没有数据"));
+        }, this.streamIdleTimeoutMs);
+      };
+      const releaseStream = () => {
+        clearIdleTimer();
+        controller.abort();
+        stream.destroy();
+      };
+      stream.on("data", armIdleTimer);
+      response.on("close", releaseStream);
+      armIdleTimer();
+      try {
+        await pipeline(stream, response);
+      } finally {
+        clearIdleTimer();
+        response.off("close", releaseStream);
+      }
       return;
     }
     response.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });

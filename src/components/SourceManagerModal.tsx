@@ -2,9 +2,12 @@ import {
   ArrowDown,
   ArrowUp,
   AudioLines,
+  Activity,
   CircleAlert,
   CircleCheck,
+  Clock3,
   ExternalLink,
+  History,
   LoaderCircle,
   Plus,
   RefreshCw,
@@ -13,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { getSourceRecommendations } from "../lib/api";
+import { getSourceConfig, getSourceRecommendations } from "../lib/api";
 import { useDialogFocus } from "../lib/use-dialog-focus";
 import type {
   LxSource,
@@ -60,6 +63,25 @@ function sourceStatusLabel(source: SourceInfo) {
   return "待初始化";
 }
 
+function formatLatency(value?: number) {
+  if (value === undefined || !Number.isFinite(value)) return "暂无";
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`;
+}
+
+function formatSuccessRate(source: SourceInfo) {
+  const metrics = source.metrics;
+  if (!metrics || metrics.attempts === 0) return "暂无样本";
+  return `${Math.round(metrics.successRate * 100)}%`;
+}
+
+function routingEventLabel(
+  event: "resolve-success" | "resolve-failure" | "media-failure",
+) {
+  if (event === "resolve-success") return "取链成功";
+  if (event === "resolve-failure") return "取链失败";
+  return "媒体失败";
+}
+
 function SourceRow({
   source,
   primary,
@@ -91,6 +113,9 @@ function SourceRow({
       Object.values(source.capabilities).flatMap((value) => value?.qualitys ?? []),
     ),
   ];
+  const metrics = source.metrics;
+  const cooling =
+    Boolean(metrics?.cooldownUntil) && (metrics?.cooldownUntil ?? 0) > Date.now();
 
   return (
     <article className={`source-row ${primary ? "primary" : ""}`}>
@@ -107,6 +132,13 @@ function SourceRow({
           </button>
           <strong>{source.name}</strong>
           {source.version && <small>{source.version}</small>}
+          {metrics?.rank ? (
+            <span
+              className={`source-route-badge ${metrics.rank === 1 ? "active" : ""}`}
+            >
+              {metrics.rank === 1 ? "当前线路" : `动态备用 #${metrics.rank}`}
+            </span>
+          ) : null}
           <span className={`source-health ${source.status.state}`}>
             {testing ? <LoaderCircle className="spin" /> : <i />}
             {testing ? "检测中" : sourceStatusLabel(source)}
@@ -117,6 +149,27 @@ function SourceRow({
           {source.author && <span>作者 {source.author}</span>}
           {platforms.length > 0 && <span>{platforms.join(" / ")}</span>}
           {qualitys.length > 0 && <span>{qualitys.join(" / ")}</span>}
+        </div>
+        <div className="source-routing-metrics">
+          <span>
+            <Activity />
+            成功率 <strong>{formatSuccessRate(source)}</strong>
+          </span>
+          <span>
+            <Clock3 />
+            平均延迟 <strong>{formatLatency(metrics?.averageLatencyMs)}</strong>
+          </span>
+          <span>
+            连续失败 <strong>{metrics?.consecutiveFailures ?? 0}</strong>
+          </span>
+          <span>
+            调度评分 <strong>{metrics?.score ?? "—"}</strong>
+          </span>
+          {cooling && (
+            <span className="source-routing-cooling">
+              近期失败，已临时降权
+            </span>
+          )}
         </div>
       </div>
 
@@ -194,6 +247,7 @@ export function SourceManagerModal({
   const [importing, setImporting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState("");
+  const [refreshingRouting, setRefreshingRouting] = useState(false);
   const [feedback, setFeedback] = useState("");
   const dialogRef = useRef<HTMLElement>(null);
 
@@ -219,6 +273,10 @@ export function SourceManagerModal({
       .then(setRecommendations)
       .catch(() => setRecommendations([]));
   }, [open]);
+
+  useEffect(() => {
+    if (open) setConfig(sourceConfig);
+  }, [open, sourceConfig]);
 
   if (!open) return null;
 
@@ -332,6 +390,26 @@ export function SourceManagerModal({
     }
   };
 
+  const refreshRouting = async () => {
+    if (refreshingRouting) return;
+    setRefreshingRouting(true);
+    setFeedback("");
+    try {
+      setConfig(await getSourceConfig());
+      setFeedback("调度指标已刷新");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "刷新调度指标失败");
+    } finally {
+      setRefreshingRouting(false);
+    }
+  };
+
+  const effectiveSources = (config.routing?.effectiveIds ?? [])
+    .map((id) => config.sources.find((source) => source.id === id))
+    .filter((source): source is SourceInfo => Boolean(source));
+  const routeLog = [...(config.routing?.log ?? [])].reverse().slice(0, 16);
+  const sourceNames = new Map(config.sources.map((source) => [source.id, source.name]));
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section
@@ -372,10 +450,45 @@ export function SourceManagerModal({
         <div className="source-section-heading">
           <div>
             <h3>已导入音源</h3>
-            <p>选择一个主音源，并按顺序添加备用音源。</p>
+            <p>手动顺序作为初始偏好，实际播放会根据成功率和延迟动态调整。</p>
           </div>
           <span>{config.sources.length} / 20</span>
         </div>
+
+        {effectiveSources.length > 0 && (
+          <section className="source-routing-overview" aria-label="动态播放线路">
+            <div className="source-routing-heading">
+              <span className="source-routing-icon">
+                <Activity />
+              </span>
+              <div>
+                <strong>动态播放线路</strong>
+                <span>高成功率、低延迟和稳定线路会优先尝试</span>
+              </div>
+              <button
+                className="icon-button subtle"
+                type="button"
+                title="刷新调度指标"
+                aria-label="刷新调度指标"
+                disabled={refreshingRouting}
+                onClick={() => void refreshRouting()}
+              >
+                <RefreshCw className={refreshingRouting ? "spin" : ""} />
+              </button>
+            </div>
+            <div className="source-routing-order">
+              {effectiveSources.map((source, index) => (
+                <div key={source.id} className="source-routing-order-item">
+                  <em>#{index + 1}</em>
+                  <strong>{source.name}</strong>
+                  <span>
+                    {formatSuccessRate(source)} · {formatLatency(source.metrics?.averageLatencyMs)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <div className="source-list">
           {orderedSources.length ? (
@@ -402,6 +515,38 @@ export function SourceManagerModal({
             </div>
           )}
         </div>
+
+        {routeLog.length > 0 && (
+          <details className="source-routing-debug">
+            <summary>
+              <History />
+              调度日志
+              <span>{routeLog.length} 条</span>
+            </summary>
+            <div className="source-routing-log">
+              {routeLog.map((entry, index) => (
+                <div
+                  key={`${entry.timestamp}:${entry.sourceId}:${index}`}
+                  className={`source-routing-log-entry ${entry.event}`}
+                >
+                  <time>
+                    {new Date(entry.timestamp).toLocaleTimeString("zh-CN", {
+                      hour12: false,
+                    })}
+                  </time>
+                  <strong>
+                    {sourceNames.get(entry.sourceId) ?? entry.sourceId}
+                  </strong>
+                  <span>{routingEventLabel(entry.event)}</span>
+                  {entry.latencyMs !== undefined && (
+                    <span>{formatLatency(entry.latencyMs)}</span>
+                  )}
+                  <em>评分 {entry.score}</em>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
 
         <form className="source-import" onSubmit={submitOnlineSource}>
           <label className="field-label" htmlFor="source-url">

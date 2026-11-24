@@ -35,7 +35,10 @@ GET /api/health
 | `DEFAULT_SOURCES_ENABLED` | `1` | 启动时自动补齐默认音源 |
 | `MEDIA_PROXY` | Compose 中为 `1` | 通过同源接口流式代理音频，避免 HTTPS 混合内容 |
 | `MEDIA_ALLOWED_HOSTS` | 空 | 可选的媒体 CDN 域名白名单 |
+| `CONTAINER_DNS_PRIMARY` | `223.5.5.5` | 容器首选 DNS，避免宿主机 DNS 对 IPv4-only 媒体域名抖动 |
+| `CONTAINER_DNS_SECONDARY` | `119.29.29.29` | 容器备用 DNS |
 | `ALLOW_PRIVATE_SOURCE_URLS` | `0` | 为 `1` 时允许内网音源地址，需自行评估风险 |
+| `DEBUG_ROUTING` | `0` | 为 `1` 时输出动态线路排序、成功率和失败原因 |
 | `DEBUG_HTTP` | `0` | 为 `1` 时输出上游请求和音源子进程阶段日志 |
 
 Compose 默认只允许以下域名：

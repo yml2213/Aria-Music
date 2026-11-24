@@ -8,6 +8,9 @@ services:
     stop_grace_period: 15s
     ports:
       - "${ARIA_PORT:-8787}:8787"
+    dns:
+      - "${CONTAINER_DNS_PRIMARY:-223.5.5.5}"
+      - "${CONTAINER_DNS_SECONDARY:-119.29.29.29}"
     environment:
       AUTH_USERNAME: "${ARIA_USERNAME:-aria}"
       AUTH_PASSWORD: "${ARIA_PASSWORD:?请在 .env 中设置 ARIA_PASSWORD}"
@@ -17,6 +20,8 @@ services:
       MEDIA_PROXY: "1"
       MEDIA_ALLOWED_HOSTS: "${MEDIA_ALLOWED_HOSTS:-}"
       ALLOW_PRIVATE_SOURCE_URLS: "${ALLOW_PRIVATE_SOURCE_URLS:-0}"
+      DEBUG_ROUTING: "${DEBUG_ROUTING:-0}"
+      DEBUG_HTTP: "${DEBUG_HTTP:-0}"
       TZ: "${TZ:-Asia/Shanghai}"
     volumes:
       - aria-data:/data

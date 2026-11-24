@@ -104,12 +104,12 @@ async function importSource(url: string) {
   if (debug) console.error(`[source] stored ${info.id}`);
   await sources.testSource(info.id).catch(() => undefined);
   if (debug) console.error(`[source] initialized ${info.id}`);
-  return store.config();
+  return sources.config();
 }
 
 async function handleApi(request: IncomingMessage, response: ServerResponse, url: URL) {
   if (request.method === "GET" && url.pathname === "/api/config") {
-    json(response, 200, store.config());
+    json(response, 200, sources.config());
     return true;
   }
   if (request.method === "GET" && url.pathname === "/api/sources/catalog") {
@@ -132,7 +132,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
   if (request.method === "POST" && testMatch) {
     const id = decodeURIComponent(testMatch[1]);
     await sources.testSource(id).catch(() => undefined);
-    json(response, 200, store.config());
+    json(response, 200, sources.config());
     return true;
   }
   const removeMatch = /^\/api\/sources\/([^/]+)$/.exec(url.pathname);
@@ -146,7 +146,8 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     const backupIds = Array.isArray(body.backupIds)
       ? body.backupIds.filter((id): id is string => typeof id === "string")
       : [];
-    json(response, 200, store.setSelection(primaryId, backupIds.slice(0, 20)));
+    store.setSelection(primaryId, backupIds.slice(0, 20));
+    json(response, 200, sources.config());
     return true;
   }
   if (request.method === "GET" && url.pathname === "/api/search") {
@@ -177,6 +178,16 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     const excludedUrls = Array.isArray(body.excludedUrls)
       ? body.excludedUrls.filter((item): item is string => typeof item === "string")
       : [];
+    const excludedSourceIds = Array.isArray(body.excludedSourceIds)
+      ? body.excludedSourceIds.filter(
+          (item): item is string => typeof item === "string",
+        )
+      : [];
+    const failedSourceIds = Array.isArray(body.failedSourceIds)
+      ? body.failedSourceIds.filter(
+          (item): item is string => typeof item === "string",
+        )
+      : [];
     if (!track || !track.platformMeta || !track.key) {
       throw new HttpError("缺少歌曲信息", 400);
     }
@@ -187,6 +198,8 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
       track,
       quality,
       excludedUrls.slice(0, 200),
+      excludedSourceIds.slice(0, 20),
+      failedSourceIds.slice(0, 20),
     );
     json(response, 200, {
       ...resolved,

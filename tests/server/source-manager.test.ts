@@ -96,3 +96,75 @@ test("source scripts cannot read host files even after escaping the VM context",
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("source manager skips a source excluded after a media failure", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "aria-source-test-"));
+  const store = new SourceStore(directory);
+  const manager = new SourceManager(store);
+  try {
+    const primary = store.import(
+      sourceScript(
+        "primary source",
+        '  return "https://media.example.com/primary.mp3";',
+      ),
+    );
+    const backup = store.import(
+      sourceScript(
+        "backup source",
+        '  return "https://media.example.com/backup.mp3";',
+      ),
+    );
+    store.setSelection(primary.id, [backup.id]);
+
+    const resolved = await manager.resolve(
+      track(),
+      "standard",
+      [],
+      [primary.id],
+    );
+    assert.equal(resolved.url, "https://media.example.com/backup.mp3");
+    assert.equal(resolved.sourceId, backup.id);
+  } finally {
+    await manager.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("source manager promotes a successful backup in the next routing order", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "aria-source-test-"));
+  const store = new SourceStore(directory);
+  const manager = new SourceManager(store);
+  try {
+    const primary = store.import(
+      sourceScript(
+        "failing primary",
+        '  throw new Error("primary unavailable");',
+      ),
+    );
+    const backup = store.import(
+      sourceScript(
+        "healthy backup",
+        '  return "https://media.example.com/backup.mp3";',
+      ),
+    );
+    store.setSelection(primary.id, [backup.id]);
+
+    const resolved = await manager.resolve(track(), "standard");
+    assert.equal(resolved.sourceId, backup.id);
+
+    const config = manager.config();
+    assert.deepEqual(config.routing?.effectiveIds, [backup.id, primary.id]);
+    assert.equal(
+      config.sources.find((source) => source.id === backup.id)?.metrics?.rank,
+      1,
+    );
+    assert.equal(
+      config.sources.find((source) => source.id === primary.id)?.metrics
+        ?.consecutiveFailures,
+      1,
+    );
+  } finally {
+    await manager.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

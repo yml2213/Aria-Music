@@ -22,6 +22,7 @@ import {
   sourceStatus as getSourceStatus,
   testSource as testMusicSource,
 } from "./lib/api";
+import { nextQueueTrack } from "./lib/playback";
 import { storage, STORAGE_ERROR_EVENT } from "./lib/storage";
 import { useLibrary } from "./hooks/use-library";
 import { useMediaSession } from "./hooks/use-media-session";
@@ -51,6 +52,11 @@ const EMPTY_SOURCE_CONFIG: SourceConfig = {
   backupIds: [],
 };
 
+const MAX_CONSECUTIVE_AUTOMATIC_FAILURES = 5;
+const AUDIO_STALL_TIMEOUT_MS = 20_000;
+const MAX_AUDIO_RECOVERY_ATTEMPTS = 6;
+const SOURCE_FAILURE_COOLDOWN_MS = 60_000;
+
 function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const playRequestRef = useRef(0);
@@ -58,6 +64,15 @@ function App() {
   const toastTimerRef = useRef<number | undefined>(undefined);
   const playbackRetryCountRef = useRef(0);
   const failedPlaybackUrlsRef = useRef<string[]>([]);
+  const resolvingRef = useRef(false);
+  const bufferingTimerRef = useRef<number | undefined>(undefined);
+  const consecutivePlaybackFailuresRef = useRef(0);
+  const currentPlaybackSourceIdRef = useRef<string | undefined>(undefined);
+  const pendingFailedSourceIdRef = useRef<string | undefined>(undefined);
+  const sourceCooldownsRef = useRef(new Map<string, number>());
+  const continueAfterFailureRef = useRef<
+    (failedTrack: Track, failedQueue: Track[], detail: string) => void
+  >(() => undefined);
 
   const [view, setView] = useState<ViewName>("home");
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => storage.getTheme());
@@ -95,9 +110,11 @@ function App() {
   const sourceConfigured = hasConfiguredSource(sourceConfig);
   const playbackSourceStatus = getSourceStatus(sourceConfig);
   const selectedSourceName = useMemo(
-    () =>
-      sourceConfig.sources.find((source) => source.id === sourceConfig.primaryId)
-        ?.name,
+    () => {
+      const effectiveId =
+        sourceConfig.routing?.effectiveIds[0] ?? sourceConfig.primaryId;
+      return sourceConfig.sources.find((source) => source.id === effectiveId)?.name;
+    },
     [sourceConfig],
   );
 
@@ -105,6 +122,43 @@ function App() {
     window.clearTimeout(toastTimerRef.current);
     setToast({ id: Date.now(), message });
     toastTimerRef.current = window.setTimeout(() => setToast(undefined), 3600);
+  }, []);
+
+  const setPlaybackResolving = useCallback((value: boolean) => {
+    resolvingRef.current = value;
+    setResolving(value);
+  }, []);
+
+  const clearBufferingTimer = useCallback(() => {
+    window.clearTimeout(bufferingTimerRef.current);
+    bufferingTimerRef.current = undefined;
+  }, []);
+
+  const activeExcludedSourceIds = useCallback(() => {
+    const now = Date.now();
+    for (const [sourceId, expiresAt] of sourceCooldownsRef.current) {
+      if (expiresAt <= now) sourceCooldownsRef.current.delete(sourceId);
+    }
+    return [...sourceCooldownsRef.current.keys()];
+  }, []);
+
+  const markSourceFailure = useCallback((sourceId?: string) => {
+    if (!sourceId) return;
+    pendingFailedSourceIdRef.current = sourceId;
+    sourceCooldownsRef.current.set(
+      sourceId,
+      Date.now() + SOURCE_FAILURE_COOLDOWN_MS,
+    );
+  }, []);
+
+  const markSourceHealthy = useCallback((sourceId?: string) => {
+    if (sourceId) sourceCooldownsRef.current.delete(sourceId);
+  }, []);
+
+  const takePendingFailedSourceIds = useCallback(() => {
+    const sourceId = pendingFailedSourceIdRef.current;
+    pendingFailedSourceIdRef.current = undefined;
+    return sourceId ? [sourceId] : [];
   }, []);
 
   const {
@@ -141,6 +195,7 @@ function App() {
   useEffect(
     () => () => {
       window.clearTimeout(toastTimerRef.current);
+      window.clearTimeout(bufferingTimerRef.current);
     },
     [],
   );
@@ -169,6 +224,15 @@ function App() {
     localStorage.removeItem("aria-music:apikey");
     void refreshSourceConfig().catch(() => undefined);
   }, [refreshSourceConfig]);
+
+  const openSourceSettings = useCallback(async () => {
+    setSettingsOpen(true);
+    await refreshSourceConfig().catch(() => undefined);
+  }, [refreshSourceConfig]);
+
+  const syncSourceRouting = useCallback(() => {
+    void getSourceConfig().then(setSourceConfig).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     storage.setTheme(themeMode);
@@ -286,18 +350,31 @@ function App() {
       setCurrentTrack(playableTrack);
       setCurrentTime(0);
       setDuration(playableTrack.duration ?? 0);
-      setResolving(false);
       setLyricLoading(true);
       if (remember) markRecent(playableTrack);
+      currentPlaybackSourceIdRef.current = resolved.sourceId;
 
       const audio = audioRef.current;
       if (audio) {
         audio.src = resolved.url;
         audio.load();
-        await audio.play().catch(() => {
-          showToast("音频已就绪，点击播放即可开始");
-        });
+        const playPromise = audio.play();
+        if (requestId === playRequestRef.current) setPlaybackResolving(false);
+        try {
+          await playPromise;
+          markSourceHealthy(resolved.sourceId);
+          syncSourceRouting();
+        } catch (error) {
+          if (requestId !== playRequestRef.current) return false;
+          setPlaybackResolving(false);
+          if (error instanceof Error && error.name === "NotAllowedError") {
+            showToast("浏览器阻止了自动播放，点击播放即可继续");
+            return false;
+          }
+          throw error;
+        }
       }
+      if (requestId === playRequestRef.current) setPlaybackResolving(false);
 
       void fetchTrackLyric(playableTrack)
         .then((lyric) => {
@@ -314,11 +391,17 @@ function App() {
         });
       return true;
     },
-    [markRecent, showToast],
+    [
+      markRecent,
+      markSourceHealthy,
+      setPlaybackResolving,
+      showToast,
+      syncSourceRouting,
+    ],
   );
 
   const playTrack = useCallback(
-    async (track: Track, context?: Track[]) => {
+    async (track: Track, context?: Track[], options?: { automatic?: boolean }) => {
       if (!sourceConfigured) {
         setSettingsOpen(true);
         showToast("请先导入一个洛雪播放音源");
@@ -333,54 +416,67 @@ function App() {
       setQueue(nextQueue);
 
       const requestId = ++playRequestRef.current;
-      setResolving(true);
+      setPlaybackResolving(true);
       setPlaying(false);
       audioRef.current?.pause();
+      clearBufferingTimer();
       failedPlaybackUrlsRef.current = [];
       playbackRetryCountRef.current = 0;
+      currentPlaybackSourceIdRef.current = undefined;
+      if (!options?.automatic) {
+        consecutivePlaybackFailuresRef.current = 0;
+      }
 
       try {
-        const resolved = await resolveTrack(track, quality);
+        const resolved = await resolveTrack(
+          track,
+          quality,
+          [],
+          activeExcludedSourceIds(),
+          takePendingFailedSourceIds(),
+        );
         await applyResolvedPlayback(track, resolved, requestId, true);
       } catch (error) {
         if (requestId !== playRequestRef.current) return;
-        setResolving(false);
+        markSourceFailure(currentPlaybackSourceIdRef.current);
+        setPlaybackResolving(false);
         setLyricLoading(false);
         setPlaying(false);
-        showToast(errorMessage(error));
+        syncSourceRouting();
+        continueAfterFailureRef.current(track, nextQueue, errorMessage(error));
       }
     },
-    [applyResolvedPlayback, quality, queue, showToast, sourceConfigured],
-  );
-
-  const findQueueIndex = useCallback(
-    () => queue.findIndex((track) => track.key === currentTrack?.key),
-    [currentTrack?.key, queue],
+    [
+      applyResolvedPlayback,
+      activeExcludedSourceIds,
+      clearBufferingTimer,
+      markSourceFailure,
+      quality,
+      queue,
+      setPlaybackResolving,
+      showToast,
+      sourceConfigured,
+      syncSourceRouting,
+      takePendingFailedSourceIds,
+    ],
   );
 
   const playNext = useCallback(
     (automatic = false) => {
-      if (!queue.length) return;
-      const index = findQueueIndex();
-
-      if (shuffle && queue.length > 1) {
-        let nextIndex = Math.floor(Math.random() * queue.length);
-        if (nextIndex === index) nextIndex = (nextIndex + 1) % queue.length;
-        void playTrack(queue[nextIndex]);
-        return;
-      }
-
-      const atEnd = index === queue.length - 1 || index === -1;
-      if (automatic && repeat === "off" && atEnd) {
+      const next = nextQueueTrack({
+        queue,
+        currentTrack,
+        repeat,
+        shuffle,
+        automatic,
+      });
+      if (!next) {
         setPlaying(false);
         return;
       }
-
-      const nextIndex =
-        atEnd && repeat !== "off" ? 0 : Math.min(Math.max(index + 1, 0), queue.length - 1);
-      if (nextIndex !== index || automatic) void playTrack(queue[nextIndex]);
+      void playTrack(next, undefined, { automatic });
     },
-    [findQueueIndex, playTrack, queue, repeat, shuffle],
+    [currentTrack, playTrack, queue, repeat, shuffle],
   );
 
   const playPrevious = useCallback(() => {
@@ -390,10 +486,42 @@ function App() {
       return;
     }
     if (!queue.length) return;
-    const index = findQueueIndex();
+    const index = queue.findIndex((track) => track.key === currentTrack?.key);
     const previousIndex = index <= 0 ? queue.length - 1 : index - 1;
     void playTrack(queue[previousIndex]);
-  }, [findQueueIndex, playTrack, queue]);
+  }, [currentTrack?.key, playTrack, queue]);
+
+  continueAfterFailureRef.current = (
+    failedTrack: Track,
+    failedQueue: Track[],
+    detail: string,
+  ) => {
+    setPlaying(false);
+    clearBufferingTimer();
+    consecutivePlaybackFailuresRef.current += 1;
+    if (
+      consecutivePlaybackFailuresRef.current >
+      MAX_CONSECUTIVE_AUTOMATIC_FAILURES
+    ) {
+      showToast(`${detail}，连续多首无法播放，已停止自动切换`);
+      return;
+    }
+    const next = nextQueueTrack({
+      queue: failedQueue,
+      currentTrack: failedTrack,
+      repeat,
+      shuffle,
+      automatic: true,
+    });
+    if (!next) {
+      showToast(`${detail}，播放队列中没有可继续的歌曲`);
+      return;
+    }
+    showToast(`${detail}，已自动跳到下一首`);
+    window.setTimeout(() => {
+      void playTrack(next, failedQueue, { automatic: true });
+    }, 0);
+  };
 
   const togglePlay = useCallback(async () => {
     const audio = audioRef.current;
@@ -513,7 +641,7 @@ function App() {
   const openSidePanel = (tab: SidePanelTab) => {
     setSidePanelTab(tab);
     setSidePanelOpen(true);
-    if (tab === "lyrics") setNowPlayingOpen(false);
+    setNowPlayingOpen(false);
   };
 
   const seek = useCallback((value: number) => {
@@ -553,11 +681,12 @@ function App() {
   };
 
   const onAudioEnded = () => {
+    clearBufferingTimer();
     if (repeat === "one") {
       const audio = audioRef.current;
       if (audio) {
         audio.currentTime = 0;
-        void audio.play();
+        void audio.play().catch(handleAudioError);
       }
       return;
     }
@@ -565,7 +694,7 @@ function App() {
   };
 
   const handleAudioError = () => {
-    if (!currentTrack || resolving) return;
+    if (!currentTrack || resolvingRef.current) return;
     const audio = audioRef.current;
     for (const failedUrl of [currentTrack.url, currentTrack.remoteUrl]) {
       if (failedUrl && !failedPlaybackUrlsRef.current.includes(failedUrl)) {
@@ -583,30 +712,61 @@ function App() {
             : "音频地址不可用";
     if (
       !sourceConfigured ||
-      playbackRetryCountRef.current >= 2 ||
+      playbackRetryCountRef.current >= MAX_AUDIO_RECOVERY_ATTEMPTS ||
       !currentTrack.url
     ) {
       setPlaying(false);
-      showToast(`${detail}，请更换音源或稍后重试`);
+      continueAfterFailureRef.current(currentTrack, queue, detail);
       return;
     }
 
     playbackRetryCountRef.current += 1;
+    markSourceFailure(currentPlaybackSourceIdRef.current);
     const requestId = ++playRequestRef.current;
-    setResolving(true);
+    setPlaybackResolving(true);
     setPlaying(false);
     audio?.pause();
-    void resolveTrack(currentTrack, quality, failedPlaybackUrlsRef.current)
+    void resolveTrack(
+      currentTrack,
+      quality,
+      failedPlaybackUrlsRef.current,
+      activeExcludedSourceIds(),
+      takePendingFailedSourceIds(),
+    )
       .then((resolved) =>
         applyResolvedPlayback(currentTrack, resolved, requestId, false),
       )
       .catch((error) => {
         if (requestId !== playRequestRef.current) return;
-        setResolving(false);
+        setPlaybackResolving(false);
         setLyricLoading(false);
         setPlaying(false);
-        showToast(`${detail}，自动换源失败：${errorMessage(error)}`);
+        syncSourceRouting();
+        continueAfterFailureRef.current(
+          currentTrack,
+          queue,
+          `${detail}，自动换源失败：${errorMessage(error)}`,
+        );
       });
+  };
+
+  const handleAudioStall = () => {
+    const audio = audioRef.current;
+    if (!audio || audio.paused || resolvingRef.current) return;
+    clearBufferingTimer();
+    const position = audio.currentTime;
+    bufferingTimerRef.current = window.setTimeout(() => {
+      const current = audioRef.current;
+      if (
+        !current ||
+        current.paused ||
+        resolvingRef.current ||
+        current.currentTime > position + 0.25
+      ) {
+        return;
+      }
+      handleAudioError();
+    }, AUDIO_STALL_TIMEOUT_MS);
   };
 
   const renderView = () => {
@@ -685,7 +845,7 @@ function App() {
         sourceName={selectedSourceName}
         onNavigate={navigate}
         onOpenPlaylist={openPlaylist}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => void openSourceSettings()}
       />
 
       <div className="app-stage">
@@ -752,9 +912,16 @@ function App() {
         duration={duration}
         volume={volume}
         muted={muted}
+        resolving={resolving}
+        repeat={repeat}
+        shuffle={shuffle}
         favorite={Boolean(currentTrack && favoriteKeys.has(currentTrack.key))}
         onClose={() => setNowPlayingOpen(false)}
         onTogglePlay={() => void togglePlay()}
+        onToggleRepeat={() =>
+          setRepeat((value) => (value === "off" ? "all" : value === "all" ? "one" : "off"))
+        }
+        onToggleShuffle={() => setShuffle((value) => !value)}
         onPrevious={playPrevious}
         onNext={skipNext}
         onSeek={seek}
@@ -778,10 +945,22 @@ function App() {
 
       <audio
         ref={audioRef}
-        preload="metadata"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+        preload="auto"
+        onPlay={() => {
+          clearBufferingTimer();
+          consecutivePlaybackFailuresRef.current = 0;
+          setPlaying(true);
+        }}
+        onPlaying={clearBufferingTimer}
+        onPause={() => {
+          clearBufferingTimer();
+          setPlaying(false);
+        }}
+        onWaiting={handleAudioStall}
+        onTimeUpdate={(event) => {
+          clearBufferingTimer();
+          setCurrentTime(event.currentTarget.currentTime);
+        }}
         onDurationChange={(event) =>
           setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)
         }

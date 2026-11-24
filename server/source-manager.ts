@@ -11,6 +11,7 @@ import type {
   SourceInfo,
   Track,
 } from "./types";
+import { SourceRouter } from "./source-routing";
 import { SourceStore } from "./source-store";
 
 interface PendingRequest {
@@ -83,10 +84,30 @@ export class SourceManager {
     { url: string; sourceId: string; quality: LxQuality; expiresAt: number }
   >();
 
-  constructor(readonly store: SourceStore) {}
+  constructor(
+    readonly store: SourceStore,
+    readonly router = new SourceRouter(store.dataDir),
+  ) {}
 
   config() {
-    return this.store.config();
+    const config = this.store.config();
+    const enabledIds = this.configuredIds(config);
+    const routing = this.router.snapshot(enabledIds);
+    const metricsById = new Map(
+      routing.metrics.map(({ sourceId, ...metrics }) => [sourceId, metrics]),
+    );
+    return {
+      ...config,
+      sources: config.sources.map((source) => ({
+        ...source,
+        metrics: metricsById.get(source.id),
+      })),
+      routing: {
+        effectiveIds: routing.effectiveIds,
+        updatedAt: routing.updatedAt,
+        log: routing.log,
+      },
+    };
   }
 
   private async terminateRuntime(runtime: Runtime) {
@@ -325,12 +346,19 @@ export class SourceManager {
       await this.terminateRuntime(existing);
       this.runtimes.delete(id);
     }
-    const runtime = await this.ensureRuntime(id);
-    return {
-      status: runtime.status,
-      message: runtime.message,
-      sources: runtime.capabilities,
-    };
+    const startedAt = Date.now();
+    try {
+      const runtime = await this.ensureRuntime(id);
+      return {
+        status: runtime.status,
+        message: runtime.message,
+        sources: runtime.capabilities,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.router.recordFailure(id, Date.now() - startedAt, `初始化失败：${message}`);
+      throw error;
+    }
   }
 
   async removeSource(id: string) {
@@ -342,7 +370,9 @@ export class SourceManager {
     for (const [key, value] of this.urlCache) {
       if (value.sourceId === id) this.urlCache.delete(key);
     }
-    return this.store.remove(id);
+    this.store.remove(id);
+    this.router.removeSource(id);
+    return this.config();
   }
 
   private async requestMusicUrl(
@@ -399,31 +429,57 @@ export class SourceManager {
     return normalized;
   }
 
-  private enabledIds() {
-    const config = this.store.config();
+  private configuredIds(config = this.store.config()) {
     const known = new Set(config.sources.map((source) => source.id));
     return [...new Set([config.primaryId, ...config.backupIds])].filter((id) =>
       known.has(id),
     );
   }
 
+  private debugRouting(message: string) {
+    if (
+      process.env.DEBUG_ROUTING === "1" ||
+      process.env.DEBUG_HTTP === "1"
+    ) {
+      console.error(`[source-routing] ${message}`);
+    }
+  }
+
   async resolve(
     track: Track,
     requestedQuality: Quality,
     excludedUrls: string[] = [],
+    excludedSourceIds: string[] = [],
+    failedSourceIds: string[] = [],
   ): Promise<PlaybackResolution> {
     const sourceKey =
       track.platformMeta.lxSource as Exclude<LxSource, "local" | "mg">;
-    const ids = this.enabledIds();
-    if (!ids.length) throw new Error("还没有配置播放音源");
+    const configured = this.configuredIds();
+    if (!configured.length) throw new Error("还没有配置播放音源");
+    for (const sourceId of new Set(failedSourceIds)) {
+      if (configured.includes(sourceId)) {
+        this.router.recordMediaFailure(sourceId);
+      }
+    }
+    const routing = this.router.snapshot(configured);
     const excluded = new Set(excludedUrls);
+    const excludedSources = new Set(excludedSourceIds);
+    const ids = routing.effectiveIds.filter((id) => !excludedSources.has(id));
     const qualities = QUALITY_CHAIN[requestedQuality] ?? QUALITY_CHAIN.standard;
     const failures: string[] = [];
 
+    this.debugRouting(
+      `${track.key} order=${ids
+        .map((id) => this.store.getSource(id).name)
+        .join(" > ")}`,
+    );
+
     for (const sourceId of ids) {
+      const sourceStartedAt = Date.now();
       const cacheKey = `${sourceId}:${track.key}:${requestedQuality}`;
       const cached = this.urlCache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now() && !excluded.has(cached.url)) {
+        this.router.recordSuccess(sourceId, 0, "播放地址缓存命中");
         return {
           track,
           url: cached.url,
@@ -436,7 +492,14 @@ export class SourceManager {
       try {
         runtime = await this.ensureRuntime(sourceId);
       } catch (error) {
-        failures.push(`${this.store.getSource(sourceId).name}: ${(error as Error).message}`);
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push(`${this.store.getSource(sourceId).name}: ${message}`);
+        this.router.recordFailure(
+          sourceId,
+          Date.now() - sourceStartedAt,
+          message,
+        );
+        this.debugRouting(`${sourceId} failed: ${message}`);
         continue;
       }
       const capability = runtime.capabilities[sourceKey];
@@ -445,6 +508,8 @@ export class SourceManager {
         (quality) =>
           capability.qualitys.length === 0 || capability.qualitys.includes(quality),
       );
+      if (!supported.length) continue;
+      let sourceError: unknown;
       for (const quality of supported) {
         try {
           const url = await this.requestMusicUrl(sourceId, track, quality);
@@ -455,6 +520,14 @@ export class SourceManager {
             quality,
             expiresAt: Date.now() + 5 * 60_000,
           });
+          this.router.recordSuccess(
+            sourceId,
+            Date.now() - sourceStartedAt,
+            `${quality} ${this.store.getSource(sourceId).name}`,
+          );
+          this.debugRouting(
+            `${sourceId} success quality=${quality} latency=${Date.now() - sourceStartedAt}ms`,
+          );
           return {
             track,
             url,
@@ -463,6 +536,7 @@ export class SourceManager {
             sourceName: this.store.getSource(sourceId).name,
           };
         } catch (error) {
+          sourceError = error;
           failures.push(
             `${this.store.getSource(sourceId).name} ${quality}: ${
               error instanceof Error ? error.message : String(error)
@@ -470,6 +544,16 @@ export class SourceManager {
           );
           if (transportError(error)) break;
         }
+      }
+      if (sourceError) {
+        const message =
+          sourceError instanceof Error ? sourceError.message : String(sourceError);
+        this.router.recordFailure(
+          sourceId,
+          Date.now() - sourceStartedAt,
+          message,
+        );
+        this.debugRouting(`${sourceId} failed: ${message}`);
       }
     }
     const summary = failures.slice(-3).join("；");

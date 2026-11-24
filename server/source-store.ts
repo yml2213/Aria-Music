@@ -123,7 +123,9 @@ export class SourceStore {
   private readonly file: string;
   private data: StoredData;
 
-  constructor(dataDir = process.env.MUSIC_DATA_DIR || path.join(process.cwd(), "data")) {
+  constructor(
+    readonly dataDir = process.env.MUSIC_DATA_DIR || path.join(process.cwd(), "data"),
+  ) {
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     this.file = path.join(dataDir, "sources.json");
     this.data = this.read();

@@ -63,6 +63,42 @@ export interface SourceStatus {
   checkedAt?: number;
 }
 
+export interface SourceMetrics {
+  rank: number;
+  score: number;
+  attempts: number;
+  successes: number;
+  failures: number;
+  mediaFailures: number;
+  successRate: number;
+  averageLatencyMs?: number;
+  lastLatencyMs?: number;
+  consecutiveFailures: number;
+  cooldownUntil?: number;
+  lastError?: string;
+  lastEventAt?: number;
+}
+
+export type SourceRoutingEvent =
+  | "resolve-success"
+  | "resolve-failure"
+  | "media-failure";
+
+export interface SourceRoutingLogEntry {
+  timestamp: number;
+  sourceId: string;
+  event: SourceRoutingEvent;
+  score: number;
+  latencyMs?: number;
+  message?: string;
+}
+
+export interface SourceRouting {
+  effectiveIds: string[];
+  updatedAt: number;
+  log: SourceRoutingLogEntry[];
+}
+
 export interface SourceInfo {
   id: string;
   name: string;
@@ -74,12 +110,14 @@ export interface SourceInfo {
   importedAt: number;
   capabilities: Partial<Record<LxSource, SourceCapability>>;
   status: SourceStatus;
+  metrics?: SourceMetrics;
 }
 
 export interface SourceConfig {
   sources: SourceInfo[];
   primaryId: string;
   backupIds: string[];
+  routing?: SourceRouting;
 }
 
 export interface PlaybackResolution {

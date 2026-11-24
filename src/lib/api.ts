@@ -88,10 +88,18 @@ export async function resolveTrack(
   track: Track,
   quality: Quality,
   excludedUrls: string[] = [],
+  excludedSourceIds: string[] = [],
+  failedSourceIds: string[] = [],
 ) {
   return requestJson<ResolvedTrack>("/api/track/resolve", {
     method: "POST",
-    body: JSON.stringify({ track, quality, excludedUrls }),
+    body: JSON.stringify({
+      track,
+      quality,
+      excludedUrls,
+      excludedSourceIds,
+      failedSourceIds,
+    }),
   });
 }
 
@@ -151,9 +159,11 @@ export function hasConfiguredSource(config: SourceConfig) {
 
 export function sourceStatus(config: SourceConfig): "idle" | "ready" | "error" {
   if (!hasConfiguredSource(config)) return "idle";
-  const primary = config.sources.find((source) => source.id === config.primaryId);
-  if (!primary || primary.status.state === "error") return "error";
-  return primary.status.state === "ready" ? "ready" : "idle";
+  const effectiveId =
+    config.routing?.effectiveIds[0] ?? config.primaryId;
+  const source = config.sources.find((item) => item.id === effectiveId);
+  if (!source || source.status.state === "error") return "error";
+  return source.status.state === "ready" ? "ready" : "idle";
 }
 
 export function providerLabel(provider: Provider) {
